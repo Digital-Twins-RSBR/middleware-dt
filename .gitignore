@@ -1,2 +1,11 @@
-settings.py
+*˜
 *.pyc
+.svn
+.DS_Store
+.DS_Store?
+._*
+*.un~
+settings.py
+.Spotlight-V100
+.Trashes
+.settings/*
