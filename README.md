@@ -19,18 +19,21 @@ Esboço de Implementação
     Estrutura de Diretórios
         middleware-dt/
             │
-            ├── middleware/
+            ├── facade/
             │   ├── __init__.py
             │   ├── admin.py
+            |   |── api.py
             │   ├── apps.py
             │   ├── models.py
             │   ├── serializers.py
+            │   ├── schemas.py
             │   ├── urls.py
             │   ├── views.py
             │
             ├── middleware-dt/
             │   ├── __init__.py
             │   ├── asgi.py
+            │   ├── settings_base.py
             │   ├── settings.py
             │   ├── urls.py
             │   ├── wsgi.py
@@ -40,25 +43,24 @@ Esboço de Implementação
                 ├── base.txt
 
 
-
 Essa arquitetura é modular e escalável, facilitando futuras expansões e manutenções.
 
 Passos para Executar
 
-    Instale as dependências:
+    1) Instale as dependências:
 
             pip install -r requirements/base.txt
     
-    Configure o banco de dados no middlwware_dt/settings.py.
+    2) Configure o banco de dados no middlwware_dt/settings.py.
 
-    Crie as migrações e migre o banco de dados:
+    3) Crie as migrações e migre o banco de dados:
 
             python manage.py makemigrations
             python manage.py migrate
 
-    Crie um superusuário:
+    4) Crie um superusuário:
             python manage.py createsuperuser
     
-    Execute o servidor:
+    5) Execute o servidor:
             python manage.py runserver
 
