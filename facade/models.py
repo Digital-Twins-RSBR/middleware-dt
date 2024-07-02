@@ -22,7 +22,6 @@ class DeviceType(models.Model):
         return self.name
 
 class Device(models.Model):
-    device_id = models.CharField(max_length=80, unique=True)
     name = models.CharField(max_length=255)
     identifier = models.CharField(max_length=255)
     status = models.CharField(max_length=255)
@@ -32,6 +31,26 @@ class Device(models.Model):
 
     def __str__(self):
         return self.name
+    
+    class Meta:
+        unique_together = ('identifier', 'gateway')
+
+
+class Property(models.Model):
+    TYPE_CHOICES = (("Boolean", "Boolean"), ("Integer", "Integer", ),("Double", "Double",))
+    device = models.ForeignKey(Device, null=False, on_delete=models.CASCADE)
+    name = models.CharField(max_length=255)
+    type = models.CharField(choices=TYPE_CHOICES)
+    causal = models.BooleanField(default=False)
+    value = models.CharField(max_length=255)
+    # Eu pensei em colocar uma regra que seria chamado em cima do value da propriedade
+    # policies = models.CharField()
+    
+    class Meta:
+        unique_together = ('device', 'name')
+
+    def __str__(self):
+        return f'{self.name} - {self.device}'
     
 
 # Properties

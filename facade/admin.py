@@ -1,7 +1,7 @@
 # facade/admin.py
 from django.contrib import admin
 
-from .models import Device, DeviceType, GatewayIOT
+from .models import Device, DeviceType, GatewayIOT, Property
 
 @admin.register(DeviceType)
 class DeviceTypeAdmin(admin.ModelAdmin):
@@ -9,7 +9,13 @@ class DeviceTypeAdmin(admin.ModelAdmin):
 
 @admin.register(Device)
 class DeviceAdmin(admin.ModelAdmin):
-    list_display = ('device_id', 'name', 'identifier', 'status', 'type', 'gateway', 'user')
+    list_display = ('name', 'identifier', 'status', 'type', 'gateway', 'user')
+
+
+@admin.register(Property)
+class PropertyAdmin(admin.ModelAdmin):
+    list_display = ('device', 'name', 'type', 'causal')
+
 
 @admin.register(GatewayIOT)
 class GatewayAdmin(admin.ModelAdmin):

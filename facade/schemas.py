@@ -14,7 +14,7 @@ class DeviceRPCView(Schema):
 class DeviceSchema(ModelSchema):
     class Meta:
         model = Device
-        fields = ('device_id', 'name', 'identifier', 'status', 'type', 'gateway', 'user')
+        fields = ('id', 'name', 'identifier', 'status', 'type', 'gateway', 'user')
 
 class GatewayIOTSchema(ModelSchema):
     class Meta:

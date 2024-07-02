@@ -21,6 +21,7 @@ INSTALLED_APPS = [
     'ninja',
     'ninja_extra',
     'facade',
+    'orchestrator',
 ]
 
 MIDDLEWARE = [
