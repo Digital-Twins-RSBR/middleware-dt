@@ -3,7 +3,6 @@ from django.shortcuts import get_object_or_404
 
 from orchestrator.schemas import DTDLModelSchema, DigitalTwinInstanceSchema
 
-from ninja_extra import api_controller, http_get
 from .models import DigitalTwinInstance, DigitalTwinInstanceProperty, DTDLModel, ModelElement, ModelRelationship
 from ninja import Router
 
