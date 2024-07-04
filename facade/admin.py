@@ -7,9 +7,14 @@ from .models import Device, DeviceType, GatewayIOT, Property
 class DeviceTypeAdmin(admin.ModelAdmin):
     list_display = ('name', 'rpc_methods')
 
+class PropertyInline(admin.TabularInline):
+    model = Property
+    extra = 1
+    
 @admin.register(Device)
 class DeviceAdmin(admin.ModelAdmin):
     list_display = ('name', 'identifier', 'status', 'type', 'gateway', 'user')
+    inlines = [PropertyInline,]
 
 
 @admin.register(Property)

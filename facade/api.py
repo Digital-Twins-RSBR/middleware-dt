@@ -8,9 +8,10 @@ import requests
 from django.contrib.auth import authenticate
 from django.shortcuts import get_object_or_404
 from rest_framework_simplejwt.tokens import RefreshToken
-from ninja import Router
+from ninja import Router, NinjaAPI
 
 router = Router()
+api = NinjaAPI()
 
 
 # @router.post("/token/", response={200: dict})
@@ -19,7 +20,7 @@ router = Router()
 #     if user is not None:
 #         refresh = RefreshToken.for_user(user)
 #         return {"refresh": str(refresh), "access": str(refresh.access_token)}
-#     return router.create_response(request, {"error": "Invalid credentials"}, status=401)
+#     return api.create_response(request, {"error": "Invalid credentials"}, status=401)
 
 
 @router.get("/devices/", response={200: list[DeviceSchema]}, tags=['Facade'])
@@ -61,7 +62,7 @@ def call_device_rpc(request, device_id: int, payload: DeviceRPCView):
     )
     if response.status_code == 200:
         return response.json()
-    return router.create_response(request, response.json(), status=response.status_code)
+    return api.create_response(request, response.json(), status=response.status_code)
 
 
 @router.get("/gatewaysiot/{gateway_id}/discover-devices/", response={200: list[DeviceSchema]}, tags=['Facade'])
@@ -79,7 +80,7 @@ def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Q
         devices_data = response.json()['data']
         devices = []
         for device_data in devices_data:
-            device, created = Device.objects.update_or_create(
+            device, created = Device.objects.update_or_create(identifier=device_data['id']['id'],
                 defaults={
                     'name': device_data['name'],
                     'identifier': device_data['id']['id'],
@@ -91,7 +92,7 @@ def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Q
             )
             devices.append(device)
         return devices
-    return router.create_response(request, response.json(), status=response.status_code)
+    return api.create_response(request, response.json(), status=response.status_code)
 
 @router.get("/devices/{device_id}/rpc-methods/", response={200: list}, tags=['Facade'])
 def list_device_rpc_methods(request, device_id: int):

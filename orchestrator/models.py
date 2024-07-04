@@ -1,5 +1,7 @@
 from django.db import models
 
+from facade.models import Device, Property
+
 # Create your models here.
 # Modelos
 # Instancias
@@ -33,6 +35,29 @@ class ModelRelationship(models.Model):
     def __str__(self):
         return self.name
 
+
+class DigitalTwinInstance(models.Model):
+    model = models.ForeignKey(DTDLModel, on_delete=models.CASCADE)
+    device = models.OneToOneField(Device, on_delete=models.CASCADE, null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.device}({self.model.name})"
+    
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+                
+
+class DigitalTwinInstanceProperty(models.Model):
+    dtinstance = models.ForeignKey(DigitalTwinInstance, on_delete=models.CASCADE)
+    property = models.CharField(max_length=255)
+    value = models.CharField(max_length=255, blank=True)
+    device_property = models.ForeignKey(Property, on_delete=models.CASCADE, null=True)
+    
+    def __str__(self):
+        return f"{self.dtinstance.device.name} {self.property} - {self.value}"
+    
+    class Meta:
+        unique_together = ('dtinstance', 'property', 'device_property')
 
 # [
 #     {
