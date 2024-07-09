@@ -5,7 +5,7 @@ from .models import Device, DeviceType, GatewayIOT, Property
 
 @admin.register(DeviceType)
 class DeviceTypeAdmin(admin.ModelAdmin):
-    list_display = ('name', 'rpc_methods')
+    list_display = ('name',)
 
 class PropertyInline(admin.TabularInline):
     model = Property
@@ -14,12 +14,13 @@ class PropertyInline(admin.TabularInline):
 @admin.register(Device)
 class DeviceAdmin(admin.ModelAdmin):
     list_display = ('name', 'identifier', 'status', 'type', 'gateway', 'user')
+    list_filter = ('type', 'gateway')
     inlines = [PropertyInline,]
 
 
 @admin.register(Property)
 class PropertyAdmin(admin.ModelAdmin):
-    list_display = ('device', 'name', 'type', 'causal')
+    list_display = ('device', 'name', 'type')
 
 
 @admin.register(GatewayIOT)

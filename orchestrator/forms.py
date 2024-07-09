@@ -8,7 +8,7 @@ from orchestrator.models import DigitalTwinInstance, DigitalTwinInstanceProperty
 class DigitalTwinInstanceAdminForm(forms.ModelForm):
     class Meta:
         model = DigitalTwinInstance
-        fields = ['model', 'device',]
+        fields = ['model',]
 
 class DigitalTwinInstancePropertyAdminForm(forms.ModelForm):
     class Meta:

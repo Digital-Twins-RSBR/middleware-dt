@@ -1,22 +1,69 @@
+from typing import Iterable
 from django.db import models
+from django.forms import JSONField
 
 from facade.models import Device, Property
 
-# Create your models here.
-# Modelos
-# Instancias
-
 # models.py
 
-class DTDLModel(models.Model):
+
+#docker run -p <porta>:8080 -p <porta>:8081 andregustavoo/parserwebapi:latest
+class ParserClient(models.Model):
+    name = models.CharField(max_length=255)
+    url = models.CharField(max_length=255) # /api/DTDLModels/parse
+
+    def __str__(self):
+        return self.name
+    #{
+        #"id": "string",
+        #"specification": "string"
+    #}
+
+class DTDLModel(models.Model): # ModelParsed
+    name = models.CharField(max_length=255)
+    specification = models.JSONField() # Ler id para preencher o body da requisição
+    parser_client = models.ForeignKey(ParserClient, on_delete=models.CASCADE)
+
+    @classmethod
+    def create_dtdl_model_parsed(cls, json_specification):
+        dtdl_model, created = DTDLModelParsed.objects.update_or_create(
+            dtdl_id=json_specification['id'],
+            defaults={'name': json_specification['name'], 'specification' : json_specification}
+        )
+        for element_data in json_specification['modelElements']:
+            ModelElement.objects.update_or_create(
+                dtdl_parsed=dtdl_model,
+                element_id=element_data['id'],
+                defaults={
+                    'element_type': element_data['type'],
+                    'name': element_data['name'],
+                    'schema': element_data.get('schema'),
+                    'supplement_types': element_data.get('supplementTypes', [])
+                }
+            )
+        for relationship_data in json_specification['modelRelationships']:
+            ModelRelationship.objects.update_or_create(
+                dtdl_parsed=dtdl_model,
+                relationship_id=relationship_data['id'],
+                defaults={
+                    'name': relationship_data['name'],
+                    'target': relationship_data['target']
+                }
+            )
+
+class DTDLModelParsed(models.Model): # ModelParsed
     dtdl_id = models.CharField(max_length=255, unique=True)
+    specification = models.JSONField()
     name = models.CharField(max_length=255)
 
     def __str__(self):
         return self.name
+    
+    def reload_model_parsed(self):
+        DTDLModel.create_dtdl_model_parsed(self.specification)
 
 class ModelElement(models.Model):
-    dtdl_model = models.ForeignKey(DTDLModel, related_name='model_elements', on_delete=models.CASCADE)
+    dtdl_parsed = models.ForeignKey(DTDLModelParsed, related_name='model_elements', on_delete=models.CASCADE)
     element_id = models.IntegerField()
     element_type = models.CharField(max_length=50)
     name = models.CharField(max_length=255)
@@ -27,7 +74,7 @@ class ModelElement(models.Model):
         return self.name
 
 class ModelRelationship(models.Model):
-    dtdl_model = models.ForeignKey(DTDLModel, related_name='model_relationships', on_delete=models.CASCADE)
+    dtdl_parsed = models.ForeignKey(DTDLModelParsed, related_name='model_relationships', on_delete=models.CASCADE)
     relationship_id = models.IntegerField()
     name = models.CharField(max_length=255)
     target = models.CharField(max_length=255)
@@ -37,11 +84,10 @@ class ModelRelationship(models.Model):
 
 
 class DigitalTwinInstance(models.Model):
-    model = models.ForeignKey(DTDLModel, on_delete=models.CASCADE)
-    device = models.OneToOneField(Device, on_delete=models.CASCADE, null=True, blank=True)
+    model = models.ForeignKey(DTDLModelParsed, on_delete=models.CASCADE)
 
     def __str__(self):
-        return f"{self.device}({self.model.name})"
+        return f"{self.model.name} - {self.id}"
     
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
@@ -50,14 +96,28 @@ class DigitalTwinInstance(models.Model):
 class DigitalTwinInstanceProperty(models.Model):
     dtinstance = models.ForeignKey(DigitalTwinInstance, on_delete=models.CASCADE)
     property = models.CharField(max_length=255)
+    # Adicionar Causal do Device
+    causal = models.BooleanField(default=False)
     value = models.CharField(max_length=255, blank=True)
     device_property = models.ForeignKey(Property, on_delete=models.CASCADE, null=True)
     
     def __str__(self):
-        return f"{self.dtinstance.device.name} {self.property} - {self.value}"
+        return f"{self.dtinstance}({self.device_property.device.name}) {self.property} {'(Causal)' if self.causal else ''} {self.value}"
     
     class Meta:
         unique_together = ('dtinstance', 'property', 'device_property')
+
+    def save(self, *args, **kwargs):
+        if self.id and self.causal and self.device_property:
+            old = DigitalTwinInstanceProperty.objects.get(pk=self.id)
+            if self.value != old.value:
+                try:
+                    device_property = self.device_property
+                    device_property.value=self.value
+                    device_property.save()
+                except:
+                    self.value = old.value
+        super().save(*args, **kwargs)
 
 # [
 #     {

@@ -11,31 +11,7 @@ router = Router()
 
 @router.post("/import-dtdl/", tags=['Orchestrator'])
 def import_dtdl(request, payload: list[DTDLModelSchema]):
-    for model_data in payload:
-        dtdl_model, created = DTDLModel.objects.update_or_create(
-            dtdl_id=model_data.id,
-            defaults={'name': model_data.name}
-        )
-        for element_data in model_data.modelElements:
-            ModelElement.objects.update_or_create(
-                dtdl_model=dtdl_model,
-                element_id=element_data['id'],
-                defaults={
-                    'element_type': element_data['type'],
-                    'name': element_data['name'],
-                    'schema': element_data.get('schema'),
-                    'supplement_types': element_data.get('supplementTypes', [])
-                }
-            )
-        for relationship_data in model_data.modelRelationships:
-            ModelRelationship.objects.update_or_create(
-                dtdl_model=dtdl_model,
-                relationship_id=relationship_data['id'],
-                defaults={
-                    'name': relationship_data['name'],
-                    'target': relationship_data['target']
-                }
-            )
+    DTDLModel.create_dtdl_model_parsed(payload)
     return {"success": True}
 
 
