@@ -65,7 +65,12 @@ class ModelElement(models.Model):
     supplement_types = models.JSONField(blank=True, null=True)
 
     def __str__(self):
-        return self.name
+        return f'{self.name} - {self.dtdl_parsed.name}'
+    
+    def isCausal(self):
+        if self.supplement_types:
+            return "dtmi:dtdl:extension:causal:v1:Causal" in self.supplement_types
+        return False
 
 class ModelRelationship(models.Model):
     dtdl_parsed = models.ForeignKey(DTDLModelParsed, related_name='model_relationships', on_delete=models.CASCADE)
@@ -86,27 +91,23 @@ class DigitalTwinInstance(models.Model):
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)
                 
-
+# Ajustando para que faça referência a model element
 class DigitalTwinInstanceProperty(models.Model):
     dtinstance = models.ForeignKey(DigitalTwinInstance, on_delete=models.CASCADE)
-    property = models.CharField(max_length=255)
-    # Adicionar Causal do Device
-    causal = models.BooleanField(default=False)
-    #Adicioando a propriedade schema, que é o tipo. Ela está em ModelElement.Schema
-    schema=models.CharField(max_length=255)
+    property = models.ForeignKey(ModelElement,on_delete=models.CASCADE)
     value = models.CharField(max_length=255, blank=True)
     device_property = models.ForeignKey(Property, on_delete=models.CASCADE, null=True)
 
     #Avaliar de colocar o registro no ThreadManager no __init__ ou em outro local
     
     def __str__(self):
-        return f"{self.dtinstance}({self.device_property.device.name}) {self.property} {'(Causal)' if self.causal else ''} {self.value}"
+        return f"{self.dtinstance}({self.device_property.device.name}) {self.property} {'(Causal)' if self.property.isCausal() else ''} {self.value}"
     
     class Meta:
         unique_together = ('dtinstance', 'property', 'device_property')
 
     def save(self, *args, **kwargs):
-        if self.id and self.causal and self.device_property:
+        if self.id and self.property.isCausal() and self.device_property:
             old = DigitalTwinInstanceProperty.objects.get(pk=self.id)
             if self.value != old.value:
                 try:
@@ -116,6 +117,9 @@ class DigitalTwinInstanceProperty(models.Model):
                 except:
                     self.value = old.value
         super().save(*args, **kwargs)
+
+    def causal(self):
+        return self.property.isCausal()
 
     def periodic_read_call(self,interval=5):
         while True:

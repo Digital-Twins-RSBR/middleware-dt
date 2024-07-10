@@ -86,6 +86,11 @@ class DigitalTwinInstanceAdmin(admin.ModelAdmin):
 
 @admin.register(DigitalTwinInstanceProperty)
 class DigitalTwinInstancePropertyAdmin(admin.ModelAdmin):
-    list_display = ('property', 'causal', 'schema', 'value', 'device_property')
+    list_display = ('property', 'get_causal', 'value', 'device_property')
     form = DigitalTwinInstancePropertyAdminForm
+
+    def get_causal(request, obj):
+        return obj.causal()
+    
+    get_causal.short_description = 'Causal'
     

@@ -2,6 +2,7 @@
 *.pyc
 .svn
 .DS_Store
+.venv
 .DS_Store?
 ._*
 *.un~
