@@ -2,8 +2,8 @@ from typing import Iterable
 from django.db import models
 from django.forms import JSONField
 
-from facade.models import Device, Property
-
+from facade.models import Device, Property,RPCCallTypes
+import time
 # models.py
 
 
@@ -98,8 +98,12 @@ class DigitalTwinInstanceProperty(models.Model):
     property = models.CharField(max_length=255)
     # Adicionar Causal do Device
     causal = models.BooleanField(default=False)
+    #Adicioando a propriedade schema, que é o tipo. Ela está em ModelElement.Schema
+    schema=models.CharField(max_length=255)
     value = models.CharField(max_length=255, blank=True)
     device_property = models.ForeignKey(Property, on_delete=models.CASCADE, null=True)
+
+    #Avaliar de colocar o registro no ThreadManager no __init__ ou em outro local
     
     def __str__(self):
         return f"{self.dtinstance}({self.device_property.device.name}) {self.property} {'(Causal)' if self.causal else ''} {self.value}"
@@ -119,6 +123,11 @@ class DigitalTwinInstanceProperty(models.Model):
                     self.value = old.value
         super().save(*args, **kwargs)
 
+    def periodic_read_call(self,interval=5):
+        while True:
+            self.device_property.call_rpc(RPCCallTypes.READ)
+            self.value=self.device_property.value
+            time.sleep(interval)
 # [
 #     {
 #       "id": "dtmi:housegen:Room;1",

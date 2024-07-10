@@ -4,6 +4,7 @@
 import requests
 from django.db import models
 from django.contrib.auth.models import User
+from enum import Enum
 
 class GatewayIOT(models.Model):
     name = models.CharField(max_length=255)
@@ -34,7 +35,10 @@ class Device(models.Model):
     
     class Meta:
         unique_together = ('identifier', 'gateway')
-
+#ENUM para definir os tipos de chamada. Pode trocar por uma estratégia melhor, se for o caso
+class RPCCallTypes(Enum):
+    READ=1
+    WRITE=2
 
 class Property(models.Model):
     TYPE_CHOICES = (("Boolean", "Boolean"), ("Integer", "Integer", ),("Double", "Double",))
@@ -42,6 +46,8 @@ class Property(models.Model):
     name = models.CharField(max_length=255)
     type = models.CharField(choices=TYPE_CHOICES)
     value = models.CharField(max_length=255)
+    rpc_read_method=models.CharField(max_length=255,blank=True) #Nome do RPC de leitura. Deve retornar um valor compatível com self.value
+    rpc_write_method=models.CharField(max_length=255,blank=True) #Nome 
     # rpc_methods = models.JSONField() {"read", "checkStatus", "write": "setStatus"}
     # Eu pensei em colocar uma regra que seria chamado em cima do value da propriedade
     # policies = models.CharField()
@@ -53,15 +59,15 @@ class Property(models.Model):
         return f'{self.name} - {self.device}'
     
     def save(self, *args, **kwargs):
-        mensagem = self.call_rpc()
+        mensagem = self.call_rpc(RPCCallTypes.WRITE) 
         if mensagem != 'Ok':
             self.value = None
         else:
             print(mensagem)
         super().save(*args, **kwargs)
 
-
-    def call_rpc(self):
+    #Para leitura, seria necessário criar um mecanismos no middleware para chamar de forma assincrona esse método de todas as instâncias
+    def call_rpc(self,rpc_type:RPCCallTypes):
         device = self.device
         gateway = device.gateway
         from facade.api import get_jwt_token_gateway
@@ -71,10 +77,20 @@ class Property(models.Model):
             "Content-Type": "application/json",
             "X-Authorization": f"Bearer {token}",
         }
-        valor = self.value == 'True'
-        response = requests.post(
-            url, json={"method": "switchLed", "params": valor}, headers=headers
-        )
+        #Porque precisou dessa linha abaixo?
+       # valor = self.value == 'True'
+        #Quando salvar e se tiver método write, executa a chamada
+
+        if (rpc_type is RPCCallTypes.WRITE and self.rpc_write_method):
+
+            response = requests.post(
+                url, json={"method": self.rpc_write_method, "params": self.value}, headers=headers
+            )
+        else:
+            response = requests.post(
+                url, json={"method": self.rpc_read_method}, headers=headers
+            )
+            #Precisa alterar self.value com o retorno da leitura. Sendo que eu também preciso modficar o atributo value da instância do digital twin. Essa lógica pode ficar no procedimento de registrar as chamadas
         if response.status_code == 200:
             return 'Ok'
         return f'{response.text} - status code: {response.status_code}'
