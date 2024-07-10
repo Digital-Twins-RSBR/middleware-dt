@@ -65,7 +65,8 @@ class ModelElement(models.Model):
     supplement_types = models.JSONField(blank=True, null=True)
 
     def __str__(self):
-        return self.name
+        return f'{self.name} - {self.dtdl_parsed.name}'
+    
     def isCausal(self):
         if self.supplement_types:
             return "dtmi:dtdl:extension:causal:v1:Causal" in self.supplement_types
@@ -93,10 +94,7 @@ class DigitalTwinInstance(models.Model):
 # Ajustando para que faça referência a model element
 class DigitalTwinInstanceProperty(models.Model):
     dtinstance = models.ForeignKey(DigitalTwinInstance, on_delete=models.CASCADE)
-
     property = models.ForeignKey(ModelElement,on_delete=models.CASCADE)
-    # Causal é obtido
-    #causal = models.BooleanField(default=False)
     value = models.CharField(max_length=255, blank=True)
     device_property = models.ForeignKey(Property, on_delete=models.CASCADE, null=True)
 
@@ -119,6 +117,9 @@ class DigitalTwinInstanceProperty(models.Model):
                 except:
                     self.value = old.value
         super().save(*args, **kwargs)
+
+    def causal(self):
+        return self.property.isCausal()
 
     def periodic_read_call(self,interval=5):
         while True:
