@@ -86,5 +86,6 @@ class DigitalTwinInstanceAdmin(admin.ModelAdmin):
 
 @admin.register(DigitalTwinInstanceProperty)
 class DigitalTwinInstancePropertyAdmin(admin.ModelAdmin):
+    list_display = ('property', 'causal', 'schema', 'value', 'device_property')
     form = DigitalTwinInstancePropertyAdminForm
     

@@ -85,5 +85,6 @@ Test Case:
         b) Crie uma instância desse modelo relacionando-a com a instância do dispositivo físico no middleware-dt
                 - Ao criar uma instancia do modelo dtdl você pode relacionar a uma instancia do dispositivo físico.
 
-4) 
+4) #docker run -p 8082:8080 -p <porta>:8081 andregustavoo/parserwebapi:latest
+5) python manage.py listen_gateway
         

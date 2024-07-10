@@ -6,18 +6,12 @@ from facade.models import Device, Property,RPCCallTypes
 import time
 # models.py
 
-
-#docker run -p <porta>:8080 -p <porta>:8081 andregustavoo/parserwebapi:latest
 class ParserClient(models.Model):
     name = models.CharField(max_length=255)
     url = models.CharField(max_length=255) # /api/DTDLModels/parse
 
     def __str__(self):
         return self.name
-    #{
-        #"id": "string",
-        #"specification": "string"
-    #}
 
 class DTDLModel(models.Model): # ModelParsed
     name = models.CharField(max_length=255)
@@ -127,6 +121,14 @@ class DigitalTwinInstanceProperty(models.Model):
         while True:
             self.device_property.call_rpc(RPCCallTypes.READ)
             self.value=self.device_property.value
+            time.sleep(interval)
+    
+    @classmethod
+    def periodic_read_call(cls, pk, interval=5):
+        while True:
+            dtinstanceproperty = DigitalTwinInstanceProperty.objects.filter(pk=pk).first()
+            dtinstanceproperty.device_property.call_rpc(RPCCallTypes.READ)
+            dtinstanceproperty.value=dtinstanceproperty.device_property.value
             time.sleep(interval)
 # [
 #     {

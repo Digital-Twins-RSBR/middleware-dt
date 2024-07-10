@@ -1,6 +1,7 @@
 # Create your models here.
 
 # gateway/models.py
+from decimal import Decimal
 import requests
 from django.db import models
 from django.contrib.auth.models import User
@@ -45,9 +46,9 @@ class Property(models.Model):
     device = models.ForeignKey(Device, null=False, on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
     type = models.CharField(choices=TYPE_CHOICES)
-    value = models.CharField(max_length=255)
-    rpc_read_method=models.CharField(max_length=255,blank=True) #Nome do RPC de leitura. Deve retornar um valor compatível com self.value
-    rpc_write_method=models.CharField(max_length=255,blank=True) #Nome 
+    value = models.CharField(max_length=255, blank=True, default='')
+    rpc_read_method=models.CharField(max_length=255,blank=True, default='') #Nome do RPC de leitura. Deve retornar um valor compatível com self.value
+    rpc_write_method=models.CharField(max_length=255,blank=True, default='') #Nome 
     # rpc_methods = models.JSONField() {"read", "checkStatus", "write": "setStatus"}
     # Eu pensei em colocar uma regra que seria chamado em cima do value da propriedade
     # policies = models.CharField()
@@ -61,7 +62,7 @@ class Property(models.Model):
     def save(self, *args, **kwargs):
         mensagem = self.call_rpc(RPCCallTypes.WRITE) 
         if mensagem != 'Ok':
-            self.value = None
+            self.value = ''
         else:
             print(mensagem)
         super().save(*args, **kwargs)
@@ -77,14 +78,12 @@ class Property(models.Model):
             "Content-Type": "application/json",
             "X-Authorization": f"Bearer {token}",
         }
-        #Porque precisou dessa linha abaixo?
-       # valor = self.value == 'True'
-        #Quando salvar e se tiver método write, executa a chamada
 
+        #Quando salvar e se tiver método write, executa a chamada
         if (rpc_type is RPCCallTypes.WRITE and self.rpc_write_method):
 
             response = requests.post(
-                url, json={"method": self.rpc_write_method, "params": self.value}, headers=headers
+                url, json={"method": self.rpc_write_method, "params": self.get_value()}, headers=headers
             )
         else:
             response = requests.post(
@@ -94,5 +93,14 @@ class Property(models.Model):
         if response.status_code == 200:
             return 'Ok'
         return f'{response.text} - status code: {response.status_code}'
-
     
+    def get_value(self):
+        if self.type == 'Boolean':
+            return True if self.value in ['True', 'true', True] else False
+        elif self.type == 'Integer':
+            return int(self.value)
+        elif self.type == 'Double':
+            return Decimal(self.value)
+        else:
+            return self.value
+        

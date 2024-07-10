@@ -10,6 +10,7 @@ class DeviceTypeAdmin(admin.ModelAdmin):
 class PropertyInline(admin.TabularInline):
     model = Property
     extra = 1
+    readonly_fields = ('value',)
     
 @admin.register(Device)
 class DeviceAdmin(admin.ModelAdmin):
@@ -20,7 +21,8 @@ class DeviceAdmin(admin.ModelAdmin):
 
 @admin.register(Property)
 class PropertyAdmin(admin.ModelAdmin):
-    list_display = ('device', 'name', 'type')
+    list_display = ('device', 'name', 'type', 'value')
+    readonly_fields=('value',)
 
 
 @admin.register(GatewayIOT)

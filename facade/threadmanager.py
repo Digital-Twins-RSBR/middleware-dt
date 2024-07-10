@@ -11,6 +11,7 @@ class ThreadManager:
 
     def stop_all(self):
         self.executor.shutdown(wait=True)
+
 '''
 Exemplo de Uso
 
