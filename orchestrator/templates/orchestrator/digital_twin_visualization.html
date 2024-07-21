@@ -1,0 +1,65 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Digital Twin Instance Visualization</title>
+    <script src="{% static 'mxGraph-main/packages/core/javascript/src' %}"></script>
+    <style>
+        #graphContainer {
+            width: 100%;
+            height: 600px;
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+    <h1>Digital Twin Instance Visualization</h1>
+    <div id="graphContainer"></div>
+    <script>
+        const container = document.getElementById('graphContainer');
+        const graph = new mxGraph(container);
+        
+        fetch('/api/orchestrator/instances')
+            .then(response => response.json())
+            .then(data => {
+                data.forEach(instance => {
+                    console.log(instance);
+                    const parent = graph.getDefaultParent();
+                    graph.getModel().beginUpdate();
+                    try {
+                        const vertex = graph.insertVertex(parent, null, instance.name, 20, 20, 80, 30);
+                        instance.properties.forEach(prop => {
+                            const propVertex = graph.insertVertex(parent, null, `${prop.name}: ${prop.value}`, 20, 20, 80, 30);
+                            graph.insertEdge(parent, null, '', vertex, propVertex);
+                        });
+                    } finally {
+                        graph.getModel().endUpdate();
+                    }
+                });
+            });
+
+        graph.getSelectionModel().addListener(mxEvent.CHANGE, (sender, evt) => {
+            const cells = evt.getProperty('removed');
+            if (cells && cells.length > 0) {
+                const cell = cells[0];
+                if (cell.value) {
+                    fetch(`/api/orchestrator/device/${cell.value.device_property}/rpc-methods/`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            method: 'toggle',
+                            params: {}
+                        })
+                    }).then(response => response.json())
+                      .then(data => {
+                          console.log(data);
+                          // Atualize a visualização com o novo estado do dispositivo
+                      });
+                }
+            }
+        });
+    </script>
+</body>
+</html>

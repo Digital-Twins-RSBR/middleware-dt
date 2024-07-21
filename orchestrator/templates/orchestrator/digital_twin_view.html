@@ -1,0 +1,83 @@
+<head>
+    <title>Digital Twin Instance Visualization with JointJS</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jointjs/3.4.2/joint.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/backbone.js/1.4.0/backbone-min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jointjs/3.4.2/joint.min.js"></script>
+</head>
+<body>
+    <div id="paper" style="width: 800px; height: 600px; border: 1px solid #ccc;"></div>
+    <script>
+        $(document).ready(function() {
+            var graph = new joint.dia.Graph();
+
+            var paper = new joint.dia.Paper({
+                el: $('#paper'),
+                model: graph,
+                width: 800,
+                height: 600,
+                gridSize: 1
+            });
+
+            fetch('/api/orchestrator/instances')
+                .then(response => response.json())
+                .then(data => {
+                    const elements = [];
+                    const links = [];
+
+                    data.forEach(instance => {
+                        var rect = new joint.shapes.standard.Rectangle();
+                        rect.position(100, 30 + elements.length * 150);
+                        rect.resize(150, 80);
+                        rect.attr({
+                            body: {
+                                fill: 'lightblue'
+                            },
+                            label: {
+                                text: instance.model,
+                                fill: 'black'
+                            }
+                        });
+                        rect.addTo(graph);
+                        elements.push(rect);
+
+                        instance.properties.forEach(prop => {
+                            var propRect = new joint.shapes.standard.Rectangle();
+                            propRect.position(300, 30 + elements.length * 150);
+                            propRect.resize(150, 50);
+                            propRect.attr({
+                                body: {
+                                    fill: 'lightgreen'
+                                },
+                                label: {
+                                    text: `${prop.name}: ${prop.value}`,
+                                    fill: 'black'
+                                }
+                            });
+                            propRect.addTo(graph);
+                            elements.push(propRect);
+
+                            var link = new joint.shapes.standard.Link();
+                            link.source(rect);
+                            link.target(propRect);
+                            link.addTo(graph);
+                            links.push(link);
+                        });
+
+                        if (instance.device && instance.device.toLowerCase().includes('light')) {
+                            rect.attr({
+                                body: {
+                                    fill: 'yellow'
+                                },
+                                label: {
+                                    text: instance.device,
+                                    fill: 'black'
+                                }
+                            });
+                        }
+                    });
+                });
+        });
+    </script>
+</body>
