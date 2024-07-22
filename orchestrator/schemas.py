@@ -1,18 +1,47 @@
-from ninja import Router, Schema
+from ninja import Router, Schema, ModelSchema
+from orchestrator.models import Application, DTDLModel, DTDLModelParsed, DigitalTwinInstance, DigitalTwinInstanceProperty
 
-class DTDLModelSchema(Schema):
-    id: str
-    name: str
-    modelElements: list
-    modelRelationships: list
+class CreateApplicationSchema(ModelSchema):
+    class Meta:
+        model = Application
+        fields = ['name', 'description']
 
-class DigitalTwinInstanceSchema(Schema):
-    id: int
-    model: str
-    device: str = None
-    properties: list
+class ApplicationSchema(ModelSchema):
+    class Meta:
+        model = Application
+        fields = ['id','name', 'description']
 
-class DigitalTwinPropertySchema(Schema):
-    name: str
-    value: str
-    device_property: str
+class CreateDTDLModelSchema(ModelSchema):
+
+    class Meta:
+        model = DTDLModel
+        fields = ['name', 'application', 'specification', 'parser_client']
+
+class DTDLModelSchema(ModelSchema):
+
+    class Meta:
+        model = DTDLModel
+        fields = ['id', 'application', 'name', 'specification', 'parser_client']
+
+class DTDLModelParsedSchema(ModelSchema):
+
+    class Meta:
+        model = DTDLModelParsed
+        fields = ['id', 'application', 'dtdl_id', 'name', 'specification']
+
+class CreateDTDLModelParsedSchema(ModelSchema):
+
+    class Meta:
+        model = DTDLModelParsed
+        fields = ['id', 'application', 'dtdl_id', 'name', 'specification']
+
+class DigitalTwinInstanceSchema(ModelSchema):
+
+    class Meta:
+        model = DigitalTwinInstance
+        fields = ['id', 'model']
+
+class DigitalTwinPropertySchema(ModelSchema):
+    class Meta:
+        model = DigitalTwinInstanceProperty
+        fields = ['id', 'dtinstance', 'property','value', 'device_property']

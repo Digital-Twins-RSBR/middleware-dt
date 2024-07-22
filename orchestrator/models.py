@@ -1,26 +1,41 @@
-from typing import Iterable
+from email.mime import application
 from django.db import models
 from django.forms import JSONField
+import requests
 
+from core.models import DTDLParserClient
 from facade.models import Device, Property,RPCCallTypes
 import time
 # models.py
 
-class ParserClient(models.Model):
+
+class Application(models.Model): 
     name = models.CharField(max_length=255)
-    url = models.CharField(max_length=255) # /api/DTDLModels/parse
+    description = models.TextField()
 
-    def __str__(self):
-        return self.name
 
-class DTDLModel(models.Model): # ModelParsed
+class DTDLModel(models.Model):
+    application = models.ForeignKey(Application, on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
     specification = models.JSONField() # Ler id para preencher o body da requisição
-    parser_client = models.ForeignKey(ParserClient, on_delete=models.CASCADE)
+    parser_client = models.ForeignKey(DTDLParserClient, on_delete=models.CASCADE)
+
+    def create_dtdl_model_parsed(self):
+        specification = self.specification
+        spec_id = specification.get('@id')
+        if not spec_id:
+            raise(f"Model {self.name} has no '@id' in its specification.")
+        payload = {
+            "id": spec_id,
+            "specification": specification
+        }
+        parser_url = self.parser_client.url
+        response = requests.post(parser_url, json=payload)
+        return DTDLModel.create_dtdl_model_parsed_from_json(self, response.json())
 
     @classmethod
-    def create_dtdl_model_parsed(cls, json_specification):
-        dtdl_model, created = DTDLModelParsed.objects.update_or_create(
+    def create_dtdl_models(cls, json_specification):
+        dtdl_model, created = DTDLModel.objects.update_or_create(
             dtdl_id=json_specification['id'],
             defaults={'name': json_specification['name'], 'specification' : json_specification}
         )
@@ -45,7 +60,39 @@ class DTDLModel(models.Model): # ModelParsed
                 }
             )
 
-class DTDLModelParsed(models.Model): # ModelParsed
+    @classmethod
+    def create_dtdl_model_parsed_from_json(cls, dtdl_model, json_specification):
+        application = dtdl_model.application
+        dtdl_model, created = DTDLModelParsed.objects.update_or_create(
+            dtdl_id=json_specification['id'],
+            application = application,
+            defaults={'name': json_specification['name'], 'specification' : json_specification}
+        )
+        
+        for element_data in json_specification['modelElements']:
+            ModelElement.objects.update_or_create(
+                dtdl_parsed=dtdl_model,
+                element_id=element_data['id'],
+                defaults={
+                    'element_type': element_data['type'],
+                    'name': element_data['name'],
+                    'schema': element_data.get('schema'),
+                    'supplement_types': element_data.get('supplementTypes', [])
+                }
+            )
+        for relationship_data in json_specification['modelRelationships']:
+            ModelRelationship.objects.update_or_create(
+                dtdl_parsed=dtdl_model,
+                relationship_id=relationship_data['id'],
+                defaults={
+                    'name': relationship_data['name'],
+                    'target': relationship_data['target']
+                }
+            )
+        return dtdl_model
+
+class DTDLModelParsed(models.Model):
+    application = models.ForeignKey(Application, on_delete=models.CASCADE)
     dtdl_id = models.CharField(max_length=255, unique=True)
     specification = models.JSONField()
     name = models.CharField(max_length=255)
@@ -54,7 +101,18 @@ class DTDLModelParsed(models.Model): # ModelParsed
         return self.name
     
     def reload_model_parsed(self):
-        DTDLModel.create_dtdl_model_parsed(self.specification)
+        DTDLModel.create_dtdl_model_parsed_from_json(self, self.specification)
+    
+    def create_dt_instance(self, ):
+        dt_instance, created = DigitalTwinInstance.objects.update_or_create(model=self)
+        for element in self.model_elements.all():
+            DigitalTwinInstanceProperty.objects.update_or_create(dtinstance=dt_instance, property=element)
+            print(element)
+        for relationship in self.model_relationships.all():
+            print(relationship)
+        return dt_instance
+
+        
 
 class ModelElement(models.Model):
     dtdl_parsed = models.ForeignKey(DTDLModelParsed, related_name='model_elements', on_delete=models.CASCADE)
@@ -88,9 +146,6 @@ class DigitalTwinInstance(models.Model):
     def __str__(self):
         return f"{self.model.name} - {self.id}"
     
-    def save(self, *args, **kwargs):
-        super().save(*args, **kwargs)
-                
 # Ajustando para que faça referência a model element
 class DigitalTwinInstanceProperty(models.Model):
     dtinstance = models.ForeignKey(DigitalTwinInstance, on_delete=models.CASCADE)
@@ -101,7 +156,8 @@ class DigitalTwinInstanceProperty(models.Model):
     #Avaliar de colocar o registro no ThreadManager no __init__ ou em outro local
     
     def __str__(self):
-        return f"{self.dtinstance}({self.device_property.device.name}) {self.property} {'(Causal)' if self.property.isCausal() else ''} {self.value}"
+        
+        return f"{self.dtinstance}({self.device_property.device.name if self.device_property else 'Sem dispositivo'}) {self.property} {'(Causal)' if self.property.isCausal() else ''} {self.value}"
     
     class Meta:
         unique_together = ('dtinstance', 'property', 'device_property')

@@ -3,12 +3,14 @@ import requests
 from django.contrib import admin
 from django.urls import path
 from orchestrator.forms import DigitalTwinInstanceAdminForm, DigitalTwinInstancePropertyAdminForm
-from .models import DTDLModel, DTDLModelParsed, DigitalTwinInstance, DigitalTwinInstanceProperty, ModelElement, ModelRelationship, ParserClient
+from core.models import DTDLParserClient
+from .models import Application, DTDLModel, DTDLModelParsed, DigitalTwinInstance, DigitalTwinInstanceProperty, ModelElement, ModelRelationship
 
 
-@admin.register(ParserClient)
-class ParserClientAdmin(admin.ModelAdmin):
-    list_display = ('name', 'url')
+@admin.register(Application)
+class ApplicationAdmin(admin.ModelAdmin):
+    list_display = ('name', 'description')
+    
 
 @admin.register(DTDLModel)
 class DTDLModelAdmin(admin.ModelAdmin):
@@ -36,7 +38,7 @@ class DTDLModelAdmin(admin.ModelAdmin):
                 response = requests.post(parser_url, json=payload)
 
                 if response.status_code in [200, 201]:
-                    DTDLModel.create_dtdl_model_parsed(response.json())
+                    DTDLModel.create_dtdl_model_parsed_from_json(obj, response.json())
                     self.message_user(request, f"Specification sent successfully for model {obj.name}.")
                 else:
                     self.message_user(request, f"{response.text}. Status code: {response.status_code}", level='error')

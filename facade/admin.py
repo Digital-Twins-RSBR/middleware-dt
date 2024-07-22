@@ -1,7 +1,8 @@
 # facade/admin.py
 from django.contrib import admin
 
-from .models import Device, DeviceType, GatewayIOT, Property
+from core.models import GatewayIOT
+from .models import Device, DeviceType, Property
 
 @admin.register(DeviceType)
 class DeviceTypeAdmin(admin.ModelAdmin):
@@ -24,7 +25,3 @@ class PropertyAdmin(admin.ModelAdmin):
     list_display = ('device', 'name', 'type', 'value')
     readonly_fields=('value',)
 
-
-@admin.register(GatewayIOT)
-class GatewayAdmin(admin.ModelAdmin):
-    list_display = ('name', 'url', 'username', 'user')

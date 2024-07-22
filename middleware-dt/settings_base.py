@@ -20,6 +20,7 @@ INSTALLED_APPS = [
     'django_extensions',
     'ninja',
     'ninja_extra',
+    'core',
     'facade',
     'orchestrator',
 ]

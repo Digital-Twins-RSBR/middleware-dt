@@ -7,15 +7,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from enum import Enum
 
-class GatewayIOT(models.Model):
-    name = models.CharField(max_length=255)
-    url = models.URLField()
-    username = models.CharField(max_length=255)
-    password = models.CharField(max_length=255)
-    user = models.ForeignKey(User, related_name='gateways', on_delete=models.CASCADE)
-
-    def __str__(self):
-        return self.name
+from core.models import GatewayIOT
 
 class DeviceType(models.Model):
     name = models.CharField(max_length=100, unique=True)
@@ -72,25 +64,28 @@ class Property(models.Model):
         device = self.device
         gateway = device.gateway
         from facade.api import get_jwt_token_gateway
-        token = get_jwt_token_gateway(None, gateway.id, gateway.user)
-        url = f"{gateway.url}/api/plugins/rpc/oneway/{device.identifier}"
-        headers = {
-            "Content-Type": "application/json",
-            "X-Authorization": f"Bearer {token}",
-        }
+        response, status_code = get_jwt_token_gateway(None, gateway.id, gateway.user)
+        if status_code == 200:
+            token = response['token']
+            url = f"{gateway.url}/api/plugins/rpc/oneway/{device.identifier}"
+            headers = {
+                "Content-Type": "application/json",
+                "X-Authorization": f"Bearer {token}",
+            }
 
-        #Quando salvar e se tiver método write, executa a chamada
-        if (rpc_type is RPCCallTypes.WRITE and self.rpc_write_method):
+            #Quando salvar e se tiver método write, executa a chamada
+            if (rpc_type is RPCCallTypes.WRITE and self.rpc_write_method):
 
-            response = requests.post(
-                url, json={"method": self.rpc_write_method, "params": self.get_value()}, headers=headers
-            )
-        else:
-            response = requests.post(
-                url, json={"method": self.rpc_read_method}, headers=headers
-            )
+                response = requests.post(
+                    url, json={"method": self.rpc_write_method, "params": self.get_value()}, headers=headers
+                )
+            else:
+                response = requests.post(
+                    url, json={"method": self.rpc_read_method}, headers=headers
+                )
+            status_code = response.status_code
             #Precisa alterar self.value com o retorno da leitura. Sendo que eu também preciso modficar o atributo value da instância do digital twin. Essa lógica pode ficar no procedimento de registrar as chamadas
-        if response.status_code == 200:
+        if status_code == 200:
             return 'Ok'
         return f'{response.text} - status code: {response.status_code}'
     

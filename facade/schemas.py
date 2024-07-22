@@ -1,11 +1,7 @@
 # facade/serializers.py
 from ninja import ModelSchema, Schema
-from .models import Device, GatewayIOT
+from .models import Device
 
-
-class TokenObtainPairView(Schema):
-    username: str
-    password: str
 
 class DeviceRPCView(Schema):
     method: str
@@ -15,11 +11,6 @@ class DeviceSchema(ModelSchema):
     class Meta:
         model = Device
         fields = ('id', 'name', 'identifier', 'status', 'type', 'gateway', 'user')
-
-class GatewayIOTSchema(ModelSchema):
-    class Meta:
-        model = GatewayIOT
-        fields = ('id', 'name', 'url', 'username', 'password', 'user')
 
 class DeviceDiscoveryParams(Schema):
     pageSize: int
