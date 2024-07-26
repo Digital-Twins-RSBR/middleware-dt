@@ -2,7 +2,7 @@ import json
 import requests
 from django.contrib import admin
 from django.urls import path
-from orchestrator.forms import DigitalTwinInstanceAdminForm, DigitalTwinInstancePropertyAdminForm
+from orchestrator.forms import DigitalTwinInstanceAdminForm, DigitalTwinInstancePropertyAdminForm, DigitalTwinInstancePropertyInlineForm
 from core.models import DTDLParserClient
 from .models import Application, DTDLModel, DTDLModelParsed, DigitalTwinInstance, DigitalTwinInstanceProperty, ModelElement, ModelRelationship
 
@@ -78,6 +78,7 @@ class DTDLModelParsedAdmin(admin.ModelAdmin):
 
 
 class DigitalTwinInstancePropertyInline(admin.TabularInline):
+    form = DigitalTwinInstancePropertyInlineForm
     model = DigitalTwinInstanceProperty
     extra = 1
 

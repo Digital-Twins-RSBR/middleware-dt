@@ -52,7 +52,7 @@ def get_dtdlmodel(request, dtdl_model_id: int):
     dtdlmodel = get_object_or_404(DTDLModel, id=dtdl_model_id)
     return dtdlmodel
 
-@router.get("/createdtdlmodelparsedfrommodel/{dtdl_model_id}/", response=DTDLModelParsedSchema, tags=['Orchestrator'])
+@router.post("/createdtdlmodelparsedfrommodel/{dtdl_model_id}/", response=DTDLModelParsedSchema, tags=['Orchestrator'])
 def create_dtdlmodelparsedfrommodel(request, dtdl_model_id: int):
     dtdlmodel = get_object_or_404(DTDLModel, id=dtdl_model_id)
     return dtdlmodel.create_dtdl_model_parsed()

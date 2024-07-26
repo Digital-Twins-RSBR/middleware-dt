@@ -104,7 +104,7 @@ class DTDLModelParsed(models.Model):
         DTDLModel.create_dtdl_model_parsed_from_json(self, self.specification)
     
     def create_dt_instance(self, ):
-        dt_instance, created = DigitalTwinInstance.objects.update_or_create(model=self)
+        dt_instance = DigitalTwinInstance.objects.create(model=self)
         for element in self.model_elements.all():
             DigitalTwinInstanceProperty.objects.update_or_create(dtinstance=dt_instance, property=element)
             print(element)
@@ -163,15 +163,18 @@ class DigitalTwinInstanceProperty(models.Model):
         unique_together = ('dtinstance', 'property', 'device_property')
 
     def save(self, *args, **kwargs):
-        if self.id and self.property.isCausal() and self.device_property:
+        if self.id and self.device_property:
             old = DigitalTwinInstanceProperty.objects.get(pk=self.id)
-            if self.value != old.value:
-                try:
-                    device_property = self.device_property
-                    device_property.value=self.value
-                    device_property.save()
-                except:
-                    self.value = old.value
+            if self.property.isCausal():
+                if self.value != old.value:
+                    try:
+                        device_property = self.device_property
+                        device_property.value=self.value
+                        device_property.save()
+                    except:
+                        self.value = old.value
+            else:
+                self.value = old.value
         super().save(*args, **kwargs)
 
     def causal(self):

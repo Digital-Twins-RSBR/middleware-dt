@@ -1,8 +1,6 @@
 from orchestrator.models import DigitalTwinInstanceProperty
 from facade.threadmanager import ThreadsManager
-from django.conf import settings
 import os
-import sys
 
 def main():
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "middleware-dt.settings")

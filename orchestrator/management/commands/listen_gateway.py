@@ -89,7 +89,7 @@ class Command(BaseCommand):
                     print(f'{device} - {key} - {valor}')
                     await sync_to_async(DigitalTwinInstanceProperty.objects.filter(
                         device_property__device=device, 
-                        property=key
+                        property__name=key
                     ).update)(value=valor)
 
                 except Property.DoesNotExist:
