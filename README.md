@@ -19,6 +19,13 @@ Esboço de Implementação
 
     Estrutura de Diretórios
         middleware-dt/
+            ├── core/
+            │   ├── admin.py
+            |   |── api.py
+            │   ├── models.py
+            │   ├── schemas.py
+            │   ├── urls.py
+            │   ├── views.py
             │
             ├── facade/
             │   ├── admin.py

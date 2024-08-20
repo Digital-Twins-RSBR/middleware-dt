@@ -20,6 +20,7 @@ INSTALLED_APPS = [
     'django_extensions',
     'ninja',
     'ninja_extra',
+    'corsheaders',
     'core',
     'facade',
     'orchestrator',
@@ -33,6 +34,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
 ]
 
 ROOT_URLCONF = 'middleware-dt.urls'

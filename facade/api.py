@@ -73,7 +73,8 @@ def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Q
 
 @router.get("/devices/{device_id}/rpc-methods/", response={200: list}, tags=['Facade'])
 def list_device_rpc_methods(request, device_id: int):
-    user = request.auth
-    device = get_object_or_404(Device, id=device_id, user=user)
-    return device.type.rpc_methods
+    # user = request.auth
+    device = get_object_or_404(Device, id=device_id) #, user=user)
+    rpc_methods = device.property_set.filter(rpc_read_method__isnull=False).values_list('name', 'rpc_read_method', 'rpc_write_method')
+    return rpc_methods
 
