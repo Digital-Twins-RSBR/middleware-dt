@@ -4,11 +4,11 @@ from django.contrib import admin
 from django.urls import path
 from orchestrator.forms import DigitalTwinInstanceAdminForm, DigitalTwinInstancePropertyAdminForm, DigitalTwinInstancePropertyInlineForm
 from core.models import DTDLParserClient
-from .models import Application, DTDLModel, DTDLModelParsed, DigitalTwinInstance, DigitalTwinInstanceProperty, ModelElement, ModelRelationship
+from .models import SystemContext, DTDLModel, DTDLModelParsed, DigitalTwinInstance, DigitalTwinInstanceProperty, ModelElement, ModelRelationship
 
 
-@admin.register(Application)
-class ApplicationAdmin(admin.ModelAdmin):
+@admin.register(SystemContext)
+class SystemContextAdmin(admin.ModelAdmin):
     list_display = ('name', 'description')
     
 

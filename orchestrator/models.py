@@ -1,7 +1,7 @@
-from email.mime import application
 from django.db import models
 from django.forms import JSONField
 import requests
+from requests.exceptions import RequestException
 
 from core.models import DTDLParserClient
 from facade.models import Device, Property,RPCCallTypes
@@ -9,29 +9,50 @@ import time
 # models.py
 
 
-class Application(models.Model): 
+class SystemContext(models.Model): 
     name = models.CharField(max_length=255)
     description = models.TextField()
 
+    class Meta:
+        verbose_name = "System context"
+        verbose_name_plural = "System contexts"
+
 
 class DTDLModel(models.Model):
-    application = models.ForeignKey(Application, on_delete=models.CASCADE)
+    system = models.ForeignKey(SystemContext, on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
     specification = models.JSONField() # Ler id para preencher o body da requisição
     parser_client = models.ForeignKey(DTDLParserClient, on_delete=models.CASCADE)
+
+    class Meta:
+        verbose_name = "DTDL model"
+        verbose_name_plural = "DTDL models"
 
     def create_dtdl_model_parsed(self):
         specification = self.specification
         spec_id = specification.get('@id')
         if not spec_id:
-            raise(f"Model {self.name} has no '@id' in its specification.")
+            raise ValueError(f"Model {self.name} has no '@id' in its specification.")
+        
         payload = {
             "id": spec_id,
             "specification": specification
         }
         parser_url = self.parser_client.url
-        response = requests.post(parser_url, json=payload)
-        return DTDLModel.create_dtdl_model_parsed_from_json(self, response.json())
+        try:
+            response = requests.post(parser_url, json=payload)
+            response.raise_for_status()  # Levanta um erro se o status code for 4xx/5xx
+        except RequestException as e:
+            # Logar o erro aqui, por exemplo:
+            # logger.error(f"Failed to communicate with DTDL parser: {e}")
+            raise ConnectionError(f"Failed to communicate with DTDL parser at {parser_url}: {e}")
+        try:
+            parsed_data = response.json()
+        except ValueError:
+            # Quando a resposta não é JSON ou está malformada
+            raise ValueError(f"Failed to parse JSON response from DTDL parser at {parser_url}")
+
+        return DTDLModel.create_dtdl_model_parsed_from_json(self, parsed_data)
 
     @classmethod
     def create_dtdl_models(cls, json_specification):
@@ -62,10 +83,10 @@ class DTDLModel(models.Model):
 
     @classmethod
     def create_dtdl_model_parsed_from_json(cls, dtdl_model, json_specification):
-        application = dtdl_model.application
+        system = dtdl_model.system
         dtdl_model, created = DTDLModelParsed.objects.update_or_create(
             dtdl_id=json_specification['id'],
-            application = application,
+            system = system,
             defaults={'name': json_specification['name'], 'specification' : json_specification}
         )
         
@@ -92,10 +113,14 @@ class DTDLModel(models.Model):
         return dtdl_model
 
 class DTDLModelParsed(models.Model):
-    application = models.ForeignKey(Application, on_delete=models.CASCADE)
+    system = models.ForeignKey(SystemContext, on_delete=models.CASCADE)
     dtdl_id = models.CharField(max_length=255, unique=True)
     specification = models.JSONField()
     name = models.CharField(max_length=255)
+
+    class Meta:
+        verbose_name = "DTDL parsed model"
+        verbose_name_plural = "DTDL parsed models"
 
     def __str__(self):
         return self.name
@@ -122,6 +147,10 @@ class ModelElement(models.Model):
     schema = models.CharField(max_length=50, blank=True, null=True)
     supplement_types = models.JSONField(blank=True, null=True)
 
+    class Meta:
+        verbose_name = "Model element"
+        verbose_name_plural = "Model elements"
+
     def __str__(self):
         return f'{self.name} - {self.dtdl_parsed.name}'
     
@@ -136,12 +165,20 @@ class ModelRelationship(models.Model):
     name = models.CharField(max_length=255)
     target = models.CharField(max_length=255)
 
+    class Meta:
+        verbose_name = "Model relationship"
+        verbose_name_plural = "Model relationships"
+
     def __str__(self):
         return self.name
 
 
 class DigitalTwinInstance(models.Model):
     model = models.ForeignKey(DTDLModelParsed, on_delete=models.CASCADE)
+
+    class Meta:
+        verbose_name = "Digital twin instance"
+        verbose_name_plural = "Digital twins instances"
 
     def __str__(self):
         return f"{self.model.name} - {self.id}"
@@ -154,13 +191,15 @@ class DigitalTwinInstanceProperty(models.Model):
     device_property = models.ForeignKey(Property, on_delete=models.CASCADE, null=True)
 
     #Avaliar de colocar o registro no ThreadManager no __init__ ou em outro local
-    
+
     def __str__(self):
         
         return f"{self.dtinstance}({self.device_property.device.name if self.device_property else 'Sem dispositivo'}) {self.property} {'(Causal)' if self.property.isCausal() else ''} {self.value}"
     
     class Meta:
         unique_together = ('dtinstance', 'property', 'device_property')
+        verbose_name = "Digital twin instance property"
+        verbose_name_plural = "Digital twin instances properties"
 
     def save(self, *args, **kwargs):
         if self.id and self.device_property:
