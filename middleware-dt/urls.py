@@ -5,9 +5,10 @@ from django.urls import path, include
 from core.api import router as core_router
 from facade.api import router as facade_router
 from orchestrator.api import router as orchestrator_router
-from ninja import NinjaAPI
+from ninja import NinjaAPI, Redoc
 import os
 
+# api = NinjaAPI(docs=Redoc())
 api = NinjaAPI()
 
 # Adicione as rotas dos apps 'orchestrator' e 'facade' à instância principal

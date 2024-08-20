@@ -95,3 +95,5 @@ Test Case:
 4) #docker run -p 8082:8080 -p <porta>:8081 andregustavoo/parserwebapi:latest
 5) python manage.py listen_gateway
         
+
+Usando o middleware a partir da API:
