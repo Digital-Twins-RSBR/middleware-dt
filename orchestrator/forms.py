@@ -2,7 +2,7 @@
 
 from django import forms
 
-from orchestrator.models import DigitalTwinInstance, DigitalTwinInstanceProperty
+from orchestrator.models import DigitalTwinInstance, DigitalTwinInstanceProperty, DigitalTwinInstanceRelationship
 
 
 class DigitalTwinInstanceAdminForm(forms.ModelForm):
@@ -24,3 +24,10 @@ class DigitalTwinInstancePropertyInlineForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['device_property'].required = False
+
+
+class DigitalTwinInstanceRelationshipInlineForm(forms.ModelForm):
+
+    class Meta:
+        model = DigitalTwinInstanceRelationship
+        fields = ['source_instance', 'target_instance', 'relationship',]

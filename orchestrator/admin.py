@@ -2,9 +2,9 @@ import json
 import requests
 from django.contrib import admin
 from django.urls import path
-from orchestrator.forms import DigitalTwinInstanceAdminForm, DigitalTwinInstancePropertyAdminForm, DigitalTwinInstancePropertyInlineForm
+from orchestrator.forms import DigitalTwinInstanceAdminForm, DigitalTwinInstancePropertyAdminForm, DigitalTwinInstancePropertyInlineForm, DigitalTwinInstanceRelationshipInlineForm
 from core.models import DTDLParserClient
-from .models import SystemContext, DTDLModel, DTDLModelParsed, DigitalTwinInstance, DigitalTwinInstanceProperty, ModelElement, ModelRelationship
+from .models import DigitalTwinInstanceRelationship, SystemContext, DTDLModel, DigitalTwinInstance, DigitalTwinInstanceProperty, ModelElement, ModelRelationship
 
 
 @admin.register(SystemContext)
@@ -12,10 +12,19 @@ class SystemContextAdmin(admin.ModelAdmin):
     list_display = ('name', 'description')
     
 
+class ModelElementInline(admin.TabularInline):
+    model = ModelElement
+    extra = 1
+
+class ModelRelationshipInline(admin.TabularInline):
+    model = ModelRelationship
+    extra = 1
+
 @admin.register(DTDLModel)
 class DTDLModelAdmin(admin.ModelAdmin):
-    list_display = ('name', 'specification', 'parser_client')
-    actions = ['send_specification_to_parser']
+    list_display = ('name', 'specification', 'parsed_specification')
+    inlines = [ModelElementInline, ModelRelationshipInline]
+    actions = ['send_specification_to_parser', 'reload_dtdl_specification']
 
     def send_specification_to_parser(self, request, queryset):
         for obj in queryset:
@@ -34,7 +43,8 @@ class DTDLModelAdmin(admin.ModelAdmin):
                     "specification": specification
                 }
                 # Send the POST request to the parser_client's URL
-                parser_url = obj.parser_client.url
+                parser_client = DTDLParserClient.get_active()
+                parser_url = parser_client.url
                 response = requests.post(parser_url, json=payload)
 
                 if response.status_code in [200, 201]:
@@ -55,37 +65,29 @@ class DTDLModelAdmin(admin.ModelAdmin):
         ]
         return custom_urls + urls
 
-class ModelElementInline(admin.TabularInline):
-    model = ModelElement
-    extra = 1
+@admin.register(ModelElement)
+class ModelElementAdmin(admin.ModelAdmin):
+    list_display = ('dtdl_model', 'element_id', 'element_type', 'name', 'schema', 'supplement_types')
 
-class ModelRelationshipInline(admin.TabularInline):
-    model = ModelRelationship
-    extra = 1
-
-
-@admin.register(DTDLModelParsed)
-class DTDLModelParsedAdmin(admin.ModelAdmin):
-    list_display = ('dtdl_id', 'name', 'specification')
-    inlines = [ModelElementInline, ModelRelationshipInline]
-
-    actions = ['reload_dtdl_specification']
-    def reload_dtdl_specification(self, request, queryset):
-        for obj in queryset:
-            obj.reload_model_parsed()
-            self.message_user(request, f"Specification reload successfully for model {obj.name}.")
-    reload_dtdl_specification.short_description = "Reload specification for parsed model"
-
+@admin.register(ModelRelationship)
+class ModelRelationshipAdmin(admin.ModelAdmin):
+    list_display = ('dtdl_model', 'relationship_id', 'name', 'target')
 
 class DigitalTwinInstancePropertyInline(admin.TabularInline):
     form = DigitalTwinInstancePropertyInlineForm
     model = DigitalTwinInstanceProperty
     extra = 1
 
+class DigitalTwinInstanceRelationshipInline(admin.TabularInline):
+    form = DigitalTwinInstanceRelationshipInlineForm
+    fk_name = 'source_instance'
+    model = DigitalTwinInstanceRelationship
+    extra = 1
+
 @admin.register(DigitalTwinInstance)
 class DigitalTwinInstanceAdmin(admin.ModelAdmin):
     form = DigitalTwinInstanceAdminForm
-    inlines = [DigitalTwinInstancePropertyInline,]
+    inlines = [DigitalTwinInstancePropertyInline, DigitalTwinInstanceRelationshipInline]
 
 @admin.register(DigitalTwinInstanceProperty)
 class DigitalTwinInstancePropertyAdmin(admin.ModelAdmin):
