@@ -120,7 +120,6 @@ def bind_dtinstance_device(request, system_id: int, dtinstance_id: int, payload:
 
 @router.post("/systems/{system_id}/instances/relationships/", tags=['Orchestrator'])
 def create_relationships(request, system_id: int, payload: list[DigitalTwinInstanceRelationshipSchema]):
-    import ipdb; ipdb.set_trace()
     for relationship_data in payload:
         relationship_name = relationship_data.relationship_name
         source_instance_id = relationship_data.source_instance_id
