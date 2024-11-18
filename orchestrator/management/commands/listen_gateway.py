@@ -12,6 +12,10 @@ THINGSBOARD_WS_URL_TEMPLATE = "ws://{thingsboard_server}/api/ws/plugins/telemetr
 class Command(BaseCommand):
     help = 'Starts WebSocket client to listen for ThingsBoard updates for all devices'
 
+    def __init__(self):
+        super().__init__()
+        self.active_tasks = {}  # Armazena tarefas ativas por device_id
+        
     async def get_jwt_token(self, device):
         gateway = device.gateway
         url = f"{gateway.url}/api/auth/login"
@@ -34,15 +38,40 @@ class Command(BaseCommand):
         ).replace('http://', '')
 
 
+    # async def listen(self):
+    #     dtinstanceproperties = await sync_to_async(list)(DigitalTwinInstanceProperty.objects.filter(device_property__isnull=False).select_related('device_property__device__gateway'))
+    #     tasks = []
+
+    #     for dtinstanceproperty in dtinstanceproperties:
+    #         ws_url = await self.get_ws_url(dtinstanceproperty.device_property.device)
+    #         tasks.append(self.listen_to_device(ws_url, dtinstanceproperty.device_property.device))
+
+    #     await asyncio.gather(*tasks)
+
     async def listen(self):
-        dtinstanceproperties = await sync_to_async(list)(DigitalTwinInstanceProperty.objects.filter(device_property__isnull=False).select_related('device_property__device__gateway'))
-        tasks = []
+        while True:
+            dtinstanceproperties = await sync_to_async(list)(DigitalTwinInstanceProperty.objects.filter(
+                device_property__isnull=False
+            ).select_related('device_property__device__gateway'))
+            
+            # Iniciar ou atualizar tasks para novos dispositivos
+            for dtinstanceproperty in dtinstanceproperties:
+                device_id = dtinstanceproperty.device_property.device.id
+                if device_id not in self.active_tasks:
+                    ws_url = await self.get_ws_url(dtinstanceproperty.device_property.device)
+                    self.active_tasks[device_id] = asyncio.create_task(
+                        self.listen_to_device(ws_url, dtinstanceproperty.device_property.device)
+                    )
+            
+            # Remover tasks de dispositivos que não existem mais no banco
+            active_device_ids = {d.device_property.device.id for d in dtinstanceproperties}
+            for device_id in list(self.active_tasks.keys()):
+                if device_id not in active_device_ids:
+                    self.active_tasks[device_id].cancel()
+                    del self.active_tasks[device_id]
+                    print(f"Stopped listening for device {device_id}")
 
-        for dtinstanceproperty in dtinstanceproperties:
-            ws_url = await self.get_ws_url(dtinstanceproperty.device_property.device)
-            tasks.append(self.listen_to_device(ws_url, dtinstanceproperty.device_property.device))
-
-        await asyncio.gather(*tasks)
+            await asyncio.sleep(30)  # Verificar novos dispositivos a cada 10 minutos
 
     async def listen_to_device(self, ws_url, device):
         while True:
@@ -86,23 +115,31 @@ class Command(BaseCommand):
                     hora, valor = value[0]
                     await sync_to_async(Property.objects.filter(device=device, name=key).update)(value = valor)
                     # Update the corresponding DigitalTwinInstanceProperty
-                    print(f'{device} - {key} - {valor}')
                     await sync_to_async(DigitalTwinInstanceProperty.objects.filter(
                         device_property__device=device, 
                         property__name=key
                     ).update)(value=valor)
+                    print(f"Updated property for {device.name} - {key}: {valor}")
 
                 except Property.DoesNotExist:
                     print(f"No property found for device {device.identifier} with name {key}")
                 except DigitalTwinInstanceProperty.DoesNotExist:
                     print(f"No DigitalTwinInstanceProperty found for device {device.identifier} with property {key}")
+                except Exception as e:
+                    print(f"Error processing property {key} for device {device.name}: {e}")
+
 
     def handle(self, *args, **options):
         loop = asyncio.get_event_loop()
-        loop.run_until_complete(self.listen())
-
-        while True:
-            # Periodically check for new devices (every 10 minutes)
-            print("Checking for new devices...")
+        try:
             loop.run_until_complete(self.listen())
-            asyncio.sleep(600)
+        except KeyboardInterrupt:
+            print("Stopping WebSocket listener...")
+            for task in self.active_tasks.values():
+                task.cancel()
+
+        # while True:
+        #     # Periodically check for new devices (every 10 minutes)
+        #     print("Checking for new devices...")
+        #     loop.run_until_complete(self.listen())
+        #     asyncio.sleep(600)

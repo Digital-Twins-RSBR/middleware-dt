@@ -5,10 +5,11 @@ from requests import RequestException
 
 from core.models import DTDLParserClient
 from facade.models import Property
-from orchestrator.schemas import BindDTInstancePropertieDeviceSchema, CreateDTFromDTDLModelSchema, DigitalTwinInstanceRelationshipSchema, DigitalTwinPropertySchema, PutDTDLModelSchema, SystemContextSchema, CreateSystemContextSchema, CreateDTDLModelSchema, DTDLModelSchema, DigitalTwinInstanceSchema
+from orchestrator.schemas import BindDTInstancePropertieDeviceSchema, CreateDTFromDTDLModelSchema, DigitalTwinInstancePropertySchema, DigitalTwinInstanceRelationshipSchema, DigitalTwinPropertySchema, DigitalTwinPropertyUpdateSchema, PutDTDLModelSchema, SystemContextSchema, CreateSystemContextSchema, CreateDTDLModelSchema, DTDLModelSchema, DigitalTwinInstanceSchema
 
 from .models import DigitalTwinInstanceRelationship, SystemContext, DigitalTwinInstance, DigitalTwinInstanceProperty, DTDLModel, ModelElement, ModelRelationship
 from ninja import Router
+from ninja.errors import HttpError
 
 router = Router()
 
@@ -117,6 +118,37 @@ def bind_dtinstance_device(request, system_id: int, dtinstance_id: int, payload:
     dtproperty.save()
     return dtinstance
 
+
+@router.put(
+    "/systems/{system_id}/instances/{dtinstance_id}/properties/{property_id}/",
+    response=DigitalTwinInstancePropertySchema,
+    tags=['Orchestrator'],
+    summary="Update a causal property of a digital twin instance"
+)
+def update_causal_property(request, system_id: int, dtinstance_id: int, property_id: int, payload: DigitalTwinPropertyUpdateSchema):
+    try:
+        # Verifica se o gêmeo digital e a propriedade existem
+        instance = get_object_or_404(DigitalTwinInstance, model__system_id=system_id, id=dtinstance_id)
+        property_obj = get_object_or_404(DigitalTwinInstanceProperty, id=property_id, dtinstance=instance)
+
+        # Verifica se a propriedade é causal
+        if not property_obj.causal:
+            raise HttpError(400, f"Property '{property_obj.name}' is not causal and cannot be updated.")
+
+        # # Valida o tipo do valor fornecido
+        # expected_type = property_obj.property.type  # Supondo que a tabela Property tem o campo `type`
+        # if not isinstance(payload.value, expected_type):
+        #     raise HttpError(400, f"Invalid value type. Expected {expected_type}, got {type(payload.value)}.")
+
+        # Atualiza o valor da propriedade
+        property_obj.value = payload.value
+        property_obj.save()
+        return DigitalTwinInstancePropertySchema.from_instance(property_obj)
+    
+    except DigitalTwinInstanceProperty.DoesNotExist:
+        return {"error": "Propriedade não encontrada."}, 404
+    except ValueError:
+        return {"error": "Tipo de dado inválido para a propriedade."}, 400
 
 @router.post("/systems/{system_id}/instances/relationships/", tags=['Orchestrator'])
 def create_relationships(request, system_id: int, payload: list[DigitalTwinInstanceRelationshipSchema]):

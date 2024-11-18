@@ -121,10 +121,7 @@ class DTDLModel(models.Model):
                 dtinstance=dt_instance, 
                 property=element
             )
-            # Discover do device pode ser por identificador do device, mas ai precisaria modelar no dtdl sabendo desse id
-            # ou então podemos criar pelo nome tipo LightBulb 1 - dtmi:housegen:LightBulb;1
-            # if element.isCausal():
-            #     Property.objects.filter(device__device__type__name=self.name, name=element.name, type=element.type)
+
         for relationship in self.model_relationships.all():
             source_instance = DigitalTwinInstance.objects.filter(model__name=relationship.source).first()
             target_instance = DigitalTwinInstance.objects.filter(model__name=relationship.target).first()
@@ -215,18 +212,22 @@ class DigitalTwinInstanceProperty(models.Model):
         verbose_name_plural = "Digital twin instances properties"
 
     def save(self, *args, **kwargs):
-        if self.id and self.device_property:
-            old = DigitalTwinInstanceProperty.objects.get(pk=self.id)
+        if not self.device_property:
             if self.property.isCausal():
-                if self.value != old.value:
-                    try:
-                        device_property = self.device_property
-                        device_property.value=self.value
-                        device_property.save()
-                    except:
-                        self.value = old.value
-            else:
-                self.value = old.value
+                self.device_property = Property.objects.filter(device__name=self.property.dtdl_model.name, name=self.property.name, type=self.property.schema).first()
+        if self.id:
+            if self.device_property:
+                old = DigitalTwinInstanceProperty.objects.get(pk=self.id)
+                if self.property.isCausal():
+                    if self.value != old.value:
+                        try:
+                            device_property = self.device_property
+                            device_property.value=self.value
+                            device_property.save()
+                        except:
+                            self.value = old.value
+                else:
+                    self.value = old.value
         super().save(*args, **kwargs)
 
     def causal(self):

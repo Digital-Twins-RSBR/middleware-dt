@@ -1,7 +1,7 @@
 from ninja import Router, Schema, ModelSchema
 from facade.models import Property
 from orchestrator.models import DigitalTwinInstanceRelationship, SystemContext, DTDLModel, DigitalTwinInstance, DigitalTwinInstanceProperty
-from typing import List, Optional
+from typing import Any, List, Optional
 
 class CreateSystemContextSchema(ModelSchema):
     class Meta:
@@ -83,3 +83,24 @@ class DigitalTwinInstanceRelationshipSchema(Schema):
             }
         }
 
+class DigitalTwinPropertyUpdateSchema(Schema):
+    value: Any
+
+class DigitalTwinInstancePropertySchema(Schema):
+
+    id: int
+    property: str
+    value: Any  # Aceita qualquer tipo para evitar erros de validação
+    is_causal: bool
+
+    @staticmethod
+    def from_instance(instance):
+        """
+        Converte a instância de `DigitalTwinInstanceProperty` para o schema.
+        """
+        return DigitalTwinInstancePropertySchema(
+            id=instance.id,
+            property=instance.property.name,  # Certifique-se que `name` existe
+            value=str(instance.value) if instance.value is not None else None,  # Converte para string
+            is_causal=instance.causal,  # Chama o método da instância do Digital Twin
+        )
