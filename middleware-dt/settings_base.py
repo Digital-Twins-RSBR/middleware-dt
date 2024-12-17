@@ -1,6 +1,7 @@
 # middleware-dt/settings.py
 import os
 from datetime import timedelta
+from neomodel import config
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -107,3 +108,12 @@ STATIC_URL = '/static/'
 STATICFILES_DIRS = [
     os.path.join(BASE_DIR, "static"),
 ]
+
+#### Configuração do NEO4J
+
+NEO4J_URL = os.getenv("NEO4J_URL", "bolt://localhost:7687")
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
+
+# Define a conexão com Neo4j
+config.DATABASE_URL = f"bolt://{NEO4J_USER}:{NEO4J_PASSWORD}@{NEO4J_URL}"

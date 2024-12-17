@@ -5,6 +5,7 @@ from requests import RequestException
 
 from core.models import DTDLParserClient
 from facade.models import Property
+from orchestrator.neo4jmodels import DigitalTwin
 from orchestrator.schemas import BindDTInstancePropertieDeviceSchema, CreateDTFromDTDLModelSchema, DigitalTwinInstancePropertySchema, DigitalTwinInstanceRelationshipSchema, DigitalTwinPropertySchema, DigitalTwinPropertyUpdateSchema, PutDTDLModelSchema, SystemContextSchema, CreateSystemContextSchema, CreateDTDLModelSchema, DTDLModelSchema, DigitalTwinInstanceSchema
 
 from .models import DigitalTwinInstanceRelationship, SystemContext, DigitalTwinInstance, DigitalTwinInstanceProperty, DTDLModel, ModelElement, ModelRelationship
@@ -183,3 +184,9 @@ def create_relationships(request, system_id: int, payload: list[DigitalTwinInsta
         )
 
     return {"detail": "Relationships created successfully."}
+
+
+@router.get("/systems/{system_id}/digital-twins/")
+def get_digital_twins(request):
+    twins = DigitalTwin.nodes.all()
+    return [{"name": twin.name, "description": twin.description} for twin in twins]
