@@ -104,3 +104,13 @@ class DigitalTwinInstancePropertySchema(Schema):
             value=str(instance.value) if instance.value is not None else None,  # Converte para string
             is_causal=instance.causal,  # Chama o método da instância do Digital Twin
         )
+    
+class CypherQuerySchema(Schema):
+    query: str
+
+class DTDLModelBatchSchema(Schema):
+    name: str
+    specification: dict
+
+class DTDLModelIDSchema(Schema):
+    dtdl_model_ids: List[int]
