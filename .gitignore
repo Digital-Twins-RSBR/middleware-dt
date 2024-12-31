@@ -11,3 +11,4 @@ settings.py
 .Trashes
 .settings/*
 *__pycache__*
+.env
