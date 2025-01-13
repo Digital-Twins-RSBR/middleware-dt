@@ -245,12 +245,17 @@ DATABASE_URL=postgres://postgres:postgres@db:5432/nomebanco
 NEO4J_AUTH=neo4j/password
 ```
 
-rodar o projeto:
+rodar:
 ```bash
 docker compose up
 ```
 
-parar 
+parar:
+```bash
+ctrl+c
+```
+
+remover:
 ```bash
 docker compose down
 ```
