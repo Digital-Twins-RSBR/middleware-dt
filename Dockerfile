@@ -1,16 +1,16 @@
-FROM python:3.12-slim
+FROM python:3.12
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y \
-    gcc \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir --upgrade pip setuptools
 
 COPY requirements/ requirements/
-
 RUN pip install --no-cache-dir -r requirements/base.txt
 
 COPY . .
 
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+EXPOSE 8000
+
+ENV DJANGO_SETTINGS_MODULE=middleware-dt.settings
+
+CMD ["sh", "-c", "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"]
