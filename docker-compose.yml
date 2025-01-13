@@ -1,14 +1,20 @@
+version: "3.8"
 services:
   db:
     image: postgres:15
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: nomebanco
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   middleware:
     build:
@@ -19,7 +25,12 @@ services:
     depends_on:
       - db
     environment:
-      DATABASE_URL: postgres://postgres:sua_senha@db:5432/seu_banco
+      DATABASE_URL: ${DATABASE_URL}
+    healthcheck:
+      test: ["CMD", "python", "manage.py", "check"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   neo4j:
     image: neo4j:5.8
@@ -27,7 +38,12 @@ services:
       - "7474:7474"
       - "7687:7687"
     environment:
-      NEO4J_AUTH: neo4j/password
+      NEO4J_AUTH: ${NEO4J_AUTH}
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p $(echo ${NEO4J_AUTH} | cut -d/ -f1) -p $(echo ${NEO4J_AUTH} | cut -d/ -f2) -e 'RETURN 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   db_data:
