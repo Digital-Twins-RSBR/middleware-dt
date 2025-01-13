@@ -227,3 +227,35 @@ A API do middleware estará disponível para operações de consulta, criação 
 4) #docker run -p 8082:8080 -p <porta>:8081 andregustavoo/parserwebapi:latest
 5) python manage.py listen_gateway -->
         
+
+# Rodando o projeto com docker compose
+crie um arquivo .env:
+
+```bash
+touch .env
+```
+
+adicione as variáveis ambientes no arquivo .env:
+
+```bash
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=nomebanco
+DATABASE_URL=postgres://postgres:postgres@db:5432/nomebanco
+NEO4J_AUTH=neo4j/password
+```
+
+rodar o projeto:
+```bash
+docker compose up
+```
+
+parar 
+```bash
+docker compose down
+```
+
+criar um usuário admin
+```bash
+docker-compose exec middleware python manage.py createsuperuser
+```
