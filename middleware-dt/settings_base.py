@@ -40,6 +40,10 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'middleware-dt.urls'
 
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:8000',
+]
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
@@ -89,7 +93,6 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = '/static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -105,9 +108,7 @@ SIMPLE_JWT = {
 }
 
 STATIC_URL = '/static/'
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, "static"),
-]
+STATIC_ROOT = BASE_DIR + "/" + "static/" 
 
 #### Configuração do NEO4J
 
@@ -117,3 +118,14 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 
 # Define a conexão com Neo4j
 config.DATABASE_URL = f"bolt://{NEO4J_USER}:{NEO4J_PASSWORD}@{NEO4J_URL}"
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'nomebanco',
+        'USER': 'postgres',
+        'PASSWORD': 'postgres',
+        'HOST': 'middleware-dt-db-1',
+        'PORT': '5432',
+    }
+}
