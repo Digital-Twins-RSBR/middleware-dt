@@ -40,9 +40,6 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'middleware-dt.urls'
 
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:8000',
-]
 
 TEMPLATES = [
     {
