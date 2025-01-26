@@ -1,6 +1,6 @@
 FROM python:3.12
 
-WORKDIR /app
+WORKDIR /middleware-dt
 
 RUN pip install --no-cache-dir --upgrade pip setuptools
 
@@ -13,4 +13,13 @@ EXPOSE 8000
 
 ENV DJANGO_SETTINGS_MODULE=middleware-dt.settings
 
-CMD ["sh", "-c", "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"]
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 8000
+
+ENV DJANGO_SETTINGS_MODULE=middleware-dt.settings
+
+ENTRYPOINT ["/entrypoint.sh"]
+
