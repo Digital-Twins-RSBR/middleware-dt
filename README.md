@@ -257,6 +257,9 @@ POSTGRES_PASSWORD=postgres
 POSTGRES_DB=nomebanco
 DATABASE_URL=postgres://postgres:postgres@db:5432/nomebanco
 NEO4J_AUTH=neo4j/password
+
+DEBUG=True
+ALLOWED_HOSTS=0.0.0.0,localhost,127.0.0.1
 ```
 
 > **Nota:** Substitua os valores das variáveis conforme necessário para o seu ambiente.
