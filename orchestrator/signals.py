@@ -1,7 +1,7 @@
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from orchestrator.models import DigitalTwinInstanceProperty, DigitalTwinInstanceRelationship
-from orchestrator.neo4jmodels import DigitalTwin, TwinProperty
+from orchestrator.neo4jmodels import DigitalTwin, TwinProperty, SystemContext as Neo4jSystemContext
 from neomodel import db
 
 
@@ -9,12 +9,18 @@ from neomodel import db
 @receiver(post_save, sender=DigitalTwinInstanceProperty)
 def sync_property_to_neo4j(sender, instance, created, **kwargs):
     with db.transaction:
+        system = Neo4jSystemContext.nodes.get_or_none(name=instance.dtinstance.model.system.name)
+        if not system:
+            system = Neo4jSystemContext(name=instance.dtinstance.model.system.name, description=instance.dtinstance.model.system.description)
+            system.save()
         # Busca ou cria o Digital Twin
         twin = DigitalTwin.nodes.get_or_none(name=instance.dtinstance.model.name)
         if not twin:
             twin = DigitalTwin(name=instance.dtinstance.model.name)
             twin.description = f"Digital Twin Instance {instance.dtinstance.id}"
             twin.save()
+        if not twin.is_connected(system):
+            system.digital_twins.connect(twin)
 
         # Busca a propriedade via Cypher Query
         query = """
@@ -48,12 +54,19 @@ def sync_property_to_neo4j(sender, instance, created, **kwargs):
 @receiver(post_save, sender=DigitalTwinInstanceRelationship)
 def sync_relationship_to_neo4j(sender, instance, created, **kwargs):
     with db.transaction:
+        # Busca ou cria o SystemContext
+        system = Neo4jSystemContext.nodes.get_or_none(name=instance.source_instance.model.system.name)
+        if not system:
+            system = Neo4jSystemContext(name=instance.source_instance.model.system.name, description=instance.source_instance.model.system.description)
+            system.save()
         # Busca ou cria o Digital Twin de origem
         source_twin = DigitalTwin.nodes.get_or_none(name=instance.source_instance.model.name)
         if not source_twin:
             source_twin = DigitalTwin(name=instance.source_instance.model.name)
             source_twin.description = f"Digital Twin Instance {instance.source_instance.id}"
             source_twin.save()
+        if not source_twin.system.is_connected(system):
+            system.digital_twins.connect(source_twin)
 
         # Busca ou cria o Digital Twin de destino
         target_twin = DigitalTwin.nodes.get_or_none(name=instance.target_instance.model.name)
@@ -61,7 +74,9 @@ def sync_relationship_to_neo4j(sender, instance, created, **kwargs):
             target_twin = DigitalTwin(name=instance.target_instance.model.name)
             target_twin.description = f"Digital Twin Instance {instance.target_instance.id}"
             target_twin.save()
-
+        if not target_twin.system.is_connected(system):
+            system.digital_twins.connect(target_twin)
+           
         # Conecta os Digital Twins com o relacionamento
         if not source_twin.relationships.is_connected(target_twin):
             source_twin.relationships.connect(target_twin, {'relationship': instance.relationship.name})

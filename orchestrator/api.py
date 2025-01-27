@@ -274,66 +274,117 @@ def update_causal_property(
 
 @router.post("/systems/{system_id}/instances/relationships/", tags=["Orchestrator"])
 def create_relationships(
-    request, system_id: int, payload: list[DigitalTwinInstanceRelationshipSchema]
-):
-    for relationship_data in payload:
-        relationship_name = relationship_data.relationship_name
-        source_instance_id = relationship_data.source_instance_id
-        target_instance_id = relationship_data.target_instance_id
+    request, system_id: int, relationships: list[DigitalTwinInstanceRelationshipSchema]
+): 
+    try:
+        system_context = SystemContext.objects.get(pk=system_id)
+        for relationship_data in relationships:
+            relationship_name = relationship_data.relationship_name
+            source_instance_id = relationship_data.source_instance_id
+            target_instance_id = relationship_data.target_instance_id
+            # Verifica se o relacionamento é permitido pelo modelo
+            model_relationship = ModelRelationship.objects.filter(
+                dtdl_model__system=system_context, name=relationship_name
+            ).first()
 
-        # Verifica se o relacionamento é permitido pelo modelo
-        model_relationship = ModelRelationship.objects.filter(
-            dtdl_model__system_id=system_id, name=relationship_name
-        ).first()
+            if not model_relationship:
+                return {"error": f"Relationship '{relationship_name}' is not defined in the model for system {system_id}."}, 400
 
-        if not model_relationship:
-            return {"error": f"Relationship '{relationship_name}' is not defined in the model for system {system_id}."}, 400
+            # Verifica se as instâncias digitais de origem e destino existem
+            source_instance = DigitalTwinInstance.objects.filter(
+                id=source_instance_id
+            ).first()
+            target_instance = DigitalTwinInstance.objects.filter(
+                id=target_instance_id
+            ).first()
 
-        # Verifica se as instâncias digitais de origem e destino existem
-        source_instance = DigitalTwinInstance.objects.filter(
-            id=source_instance_id
-        ).first()
-        target_instance = DigitalTwinInstance.objects.filter(
-            id=target_instance_id
-        ).first()
+            if not source_instance:
+                return {"error": f"Source Digital Twin Instance with ID {source_instance_id} does not exist."}, 400
+            if not target_instance:
+                return {"error": f"Target Digital Twin Instance with ID {target_instance_id} does not exist."}, 400
 
-        if not source_instance:
-            return {"error": f"Source Digital Twin Instance with ID {source_instance_id} does not exist."}, 400
-        if not target_instance:
-            return {"error": f"Target Digital Twin Instance with ID {target_instance_id} does not exist."}, 400
-
-        # Criar ou atualizar o relacionamento da instância digital
-        DigitalTwinInstanceRelationship.objects.update_or_create(
-            source_instance=source_instance,
-            target_instance=target_instance,
-            defaults={"model_relationship": model_relationship},
-        )
+            # Criar ou atualizar o relacionamento da instância digital
+            DigitalTwinInstanceRelationship.objects.update_or_create(
+                source_instance=source_instance,
+                target_instance=target_instance,
+                defaults={"relationship": model_relationship},
+            )
+    except SystemContext.DoesNotExist:
+        return {"error": f"SystemContext with ID {system_id} not found."}, 404
+    except Exception as e:
+        return {"error": str(e)}, 400
 
     return {"detail": "Relationships created successfully."}
+
+@router.delete("/systems/{system_id}/relationships/", tags=["Orchestrator"])
+def delete_relationships(request, system_id: int, relationships: List[DigitalTwinInstanceRelationshipSchema]):
+    try:
+        system_context = SystemContext.objects.get(pk=system_id)
+        for rel in relationships:
+            # Verifica se o relacionamento é permitido pelo modelo
+            model_relationship = ModelRelationship.objects.filter(
+                dtdl_model__system=system_context, name=rel.relationship_name
+            ).first()
+
+            if not model_relationship:
+                return {"error": f"Relationship '{rel.relationship_name}' is not defined in the model for system {system_id}."}, 400
+
+            # Verifica se as instâncias digitais de origem e destino existem
+            source_instance = DigitalTwinInstance.objects.filter(id=rel.source_instance_id).first()
+            target_instance = DigitalTwinInstance.objects.filter(id=rel.target_instance_id).first()
+
+            if not source_instance:
+                return {"error": f"Source Digital Twin Instance with ID {rel.source_instance_id} does not exist."}, 400
+            if not target_instance:
+                return {"error": f"Target Digital Twin Instance with ID {rel.target_instance_id} does not exist."}, 400
+
+            # Deletar o relacionamento da instância digital
+            relationship = DigitalTwinInstanceRelationship.objects.filter(
+                source_instance=source_instance,
+                target_instance=target_instance,
+                relationship=model_relationship
+            ).first()
+
+            if relationship:
+                relationship.delete()
+
+        return {"detail": "Relationships deleted successfully."}
+    except SystemContext.DoesNotExist:
+        return {"error": f"SystemContext with ID {system_id} not found."}, 404
+    except Exception as e:
+        return {"error": str(e)}, 400
 
 
 @router.post("/systems/{system_id}/instances/query/", tags=["Orchestrator"])
 def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
+    def serialize_neo4j_value(value):
+        if isinstance(value, neo4j.graph.Node):
+            return CypherQuerySchema.serialize_node(value)
+        elif isinstance(value, neo4j.graph.Relationship):
+            return {
+                "id": value.id,
+                "type": value.type,
+                "start_node": serialize_neo4j_value(value.start_node),
+                "end_node": serialize_neo4j_value(value.end_node),
+                "properties": dict(value)
+            }
+        elif isinstance(value, list):
+            return [serialize_neo4j_value(item) for item in value]
+        elif isinstance(value, dict):
+            return {key: serialize_neo4j_value(val) for key, val in value.items()}
+        else:
+            return value
+
     try:
         query = payload.query
         results, meta = db.cypher_query(query)
-        
         # Convert results to a list of dictionaries
         results_list = []
         for record in results:
-            record_dict = {}
-            if type(record) is list:
-                for item in record:
-                    if isinstance(item, neo4j.graph.Node):
-                        record_dict = CypherQuerySchema.serialize_node(item)
-                    else:
-                        record_dict = item
+            if isinstance(record, list):
+                record_dict = [serialize_neo4j_value(item) for item in record]
             else:
-                for key, value in record.items():
-                    if isinstance(value, neo4j.graph.Node):
-                        record_dict[key] = CypherQuerySchema.serialize_node(value)
-                    else:
-                        record_dict[key] = value
+                record_dict = {key: serialize_neo4j_value(value) for key, value in record.items()}
             results_list.append(record_dict)
         return {"results": results_list, "keys": meta}
     except neo4j.exceptions.ServiceUnavailable:
@@ -361,13 +412,9 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
 # }
 # Listar todas as propriedades e seus valores de um Digital Twin específico:
 # {
-#     "query": "MATCH (dt:DigitalTwin {name: 'TwinName'})-[:HAS_PROPERTY]->(prop:TwinProperty) RETURN prop.name, prop.value"
+#     "query": "MATCH (dt:DigitalTwin {name: 'Light 1'})-[:HAS_PROPERTY]->(prop:TwinProperty) RETURN prop.name, prop.value"
 # }
 # Listar todos os Digital Twins e suas propriedades:
 # {
 #     "query": "MATCH (dt:DigitalTwin)-[:HAS_PROPERTY]->(prop:TwinProperty) RETURN dt.name, prop.name, prop.value"
-# }
-# Listar todos os quartos e suas luzes:
-# {
-#     "query": "MATCH (room:DigitalTwin)-[:lights]->(light:DigitalTwin) RETURN room, light"
 # }
