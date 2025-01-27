@@ -126,7 +126,7 @@ class DTDLModel(models.Model):
             source_instance = DigitalTwinInstance.objects.filter(model__name=relationship.source).first()
             target_instance = DigitalTwinInstance.objects.filter(model__name=relationship.target).first()
             if source_instance and target_instance:
-                DigitalTwinInstanceRelationship.objects.create(
+                DigitalTwinInstanceRelationship.objects.update_or_create(
                     source_instance=source_instance,
                     target_instance=target_instance,
                     relationship=relationship
@@ -224,7 +224,7 @@ class DigitalTwinInstanceProperty(models.Model):
                             device_property = self.device_property
                             device_property.value=self.value
                             device_property.save()
-                        except:
+                        except Exception:
                             self.value = old.value
                 else:
                     self.value = old.value
@@ -255,6 +255,7 @@ class DigitalTwinInstanceRelationship(models.Model):
     class Meta:
         verbose_name = "Digital twin instance relationship"
         verbose_name_plural = "Digital twin instance relationships"
+        unique_together = ('source_instance', 'target_instance', 'relationship')
 
     def __str__(self):
         return f"Relationship {self.relationship} from {self.source_instance} to {self.target_instance}"

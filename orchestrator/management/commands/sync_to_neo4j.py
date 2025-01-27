@@ -1,5 +1,5 @@
 from django.core.management.base import BaseCommand
-from orchestrator.models import DigitalTwinInstance, DigitalTwinInstanceProperty
+from orchestrator.models import DigitalTwinInstance, DigitalTwinInstanceProperty, DigitalTwinInstanceRelationship
 from orchestrator.neo4jmodels import DigitalTwin, TwinProperty
 from neomodel import db
 
@@ -52,5 +52,11 @@ class Command(BaseCommand):
                         twin.properties.connect(twin_property)
 
                     self.stdout.write(f" - Synced Property: {twin_property.name} = {twin_property.value}")
-
+            # Sincroniza os relacionamentos
+                # Sincroniza os relacionamentos
+                for relationship in twin_instance.source_relationships.all():
+                    target_twin = DigitalTwin.nodes.get_or_none(name=relationship.target_instance.model.name)
+                    if target_twin:
+                        twin.relationships.connect(target_twin, {'relationship': relationship.relationship.name})
+                        self.stdout.write(f" - Synced Relationship: {twin.name} -> {target_twin.name}")
         self.stdout.write(self.style.SUCCESS("Synchronization completed successfully!"))

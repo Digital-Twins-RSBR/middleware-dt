@@ -1,5 +1,7 @@
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+import neo4j
+import neo4j.exceptions
 from pydantic import ValidationError
 
 from facade.models import Property
@@ -285,11 +287,7 @@ def create_relationships(
         ).first()
 
         if not model_relationship:
-            raise ValidationError(
-                {
-                    "detail": f"Relationship '{relationship_name}' is not defined in the model for system {system_id}."
-                }
-            )
+            return {"error": f"Relationship '{relationship_name}' is not defined in the model for system {system_id}."}, 400
 
         # Verifica se as instâncias digitais de origem e destino existem
         source_instance = DigitalTwinInstance.objects.filter(
@@ -300,13 +298,9 @@ def create_relationships(
         ).first()
 
         if not source_instance:
-            raise Http404(
-                f"Source Digital Twin Instance with ID {source_instance_id} does not exist."
-            )
+            return {"error": f"Source Digital Twin Instance with ID {source_instance_id} does not exist."}, 400
         if not target_instance:
-            raise Http404(
-                f"Target Digital Twin Instance with ID {target_instance_id} does not exist."
-            )
+            return {"error": f"Target Digital Twin Instance with ID {target_instance_id} does not exist."}, 400
 
         # Criar ou atualizar o relacionamento da instância digital
         DigitalTwinInstanceRelationship.objects.update_or_create(
@@ -323,7 +317,57 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
     try:
         query = payload.query
         results, meta = db.cypher_query(query)
-        return {"results": results, "meta": meta}
+        
+        # Convert results to a list of dictionaries
+        results_list = []
+        for record in results:
+            record_dict = {}
+            if type(record) is list:
+                for item in record:
+                    if isinstance(item, neo4j.graph.Node):
+                        record_dict = CypherQuerySchema.serialize_node(item)
+                    else:
+                        record_dict = item
+            else:
+                for key, value in record.items():
+                    if isinstance(value, neo4j.graph.Node):
+                        record_dict[key] = CypherQuerySchema.serialize_node(value)
+                    else:
+                        record_dict[key] = value
+            results_list.append(record_dict)
+        return {"results": results_list, "keys": meta}
+    except neo4j.exceptions.ServiceUnavailable:
+        return {"error": "Neo4j service is unavailable."}
     except Exception as e:
         return {"error": str(e)}, 400
 
+
+# Exemplos de queries Cypher para o Neo4j:
+# Listar todos os Digital Twins:
+# {
+#     "query": "MATCH (dt:DigitalTwin) RETURN dt"
+# }
+# Listar todas as propriedades de um Digital Twin específico:
+# {
+#     "query": "MATCH (dt:DigitalTwin {name: 'Light 1'})-[:HAS_PROPERTY]->(prop:TwinProperty) RETURN prop"
+# }
+# Listar todos os relacionamentos entre Digital Twins:
+# {
+#     "query": "MATCH (dt1:DigitalTwin)-[r]->(dt2:DigitalTwin) RETURN dt1, r, dt2"
+# }
+# Buscar um Digital Twin específico pelo nome:
+# {
+#     "query": "MATCH (dt:DigitalTwin {name: 'Light 1'}) RETURN dt"
+# }
+# Listar todas as propriedades e seus valores de um Digital Twin específico:
+# {
+#     "query": "MATCH (dt:DigitalTwin {name: 'TwinName'})-[:HAS_PROPERTY]->(prop:TwinProperty) RETURN prop.name, prop.value"
+# }
+# Listar todos os Digital Twins e suas propriedades:
+# {
+#     "query": "MATCH (dt:DigitalTwin)-[:HAS_PROPERTY]->(prop:TwinProperty) RETURN dt.name, prop.name, prop.value"
+# }
+# Listar todos os quartos e suas luzes:
+# {
+#     "query": "MATCH (room:DigitalTwin)-[:lights]->(light:DigitalTwin) RETURN room, light"
+# }

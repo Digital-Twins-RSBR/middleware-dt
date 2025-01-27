@@ -1,4 +1,5 @@
 from ninja import Router, Schema, ModelSchema
+from pydantic import BaseModel
 from facade.models import Property
 from orchestrator.models import DigitalTwinInstanceRelationship, SystemContext, DTDLModel, DigitalTwinInstance, DigitalTwinInstanceProperty
 from typing import Any, List, Optional
@@ -114,3 +115,13 @@ class DTDLModelBatchSchema(Schema):
 
 class DTDLModelIDSchema(Schema):
     dtdl_model_ids: List[int]
+
+class CypherQuerySchema(BaseModel):
+    query: str
+    
+    def serialize_node(node):
+        return {
+            "identity": node.id,
+            "labels": list(node.labels),
+            "properties": dict(node)
+        }
