@@ -10,4 +10,4 @@ settings.py
 .Spotlight-V100
 .Trashes
 .settings/*
-*__pycache__*
+__pycache__/

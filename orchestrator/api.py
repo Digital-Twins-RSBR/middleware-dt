@@ -376,8 +376,14 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
             return value
 
     try:
-        query = payload.query
-        results, meta = db.cypher_query(query)
+        system_context = SystemContext.objects.get(pk=system_id)
+        # Modifica a consulta Cypher para incluir o filtro system_id
+        filtered_query = f"""
+        MATCH (system:SystemContext {{name: '{system_context.name}'}})-[:CONTAINS]->(dt:DigitalTwin)
+        WITH dt
+        {payload.query}
+        """
+        results, meta = db.cypher_query(filtered_query)
         # Convert results to a list of dictionaries
         results_list = []
         for record in results:
@@ -387,8 +393,10 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
                 record_dict = {key: serialize_neo4j_value(value) for key, value in record.items()}
             results_list.append(record_dict)
         return {"results": results_list, "keys": meta}
+    except neo4j.exceptions.CypherSyntaxError as e:
+        return {"error": str(e)}, 400
     except neo4j.exceptions.ServiceUnavailable:
-        return {"error": "Neo4j service is unavailable."}
+        return {"error": "Neo4j service is unavailable."}, 400
     except Exception as e:
         return {"error": str(e)}, 400
 
