@@ -30,6 +30,7 @@ class DTDLModel(models.Model):
     class Meta:
         verbose_name = "DTDL model"
         verbose_name_plural = "DTDL models"
+        unique_together = ('system', 'dtdl_id')
 
     def save(self, *args, **kwargs):
         create_parsed_specification = False
