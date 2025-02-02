@@ -19,7 +19,7 @@ def sync_property_to_neo4j(sender, instance, created, **kwargs):
             twin = DigitalTwin(name=instance.dtinstance.model.name)
             twin.description = f"Digital Twin Instance {instance.dtinstance.id}"
             twin.save()
-        if not twin.is_connected(system):
+        if not twin.relationships.is_connected(system):
             system.digital_twins.connect(twin)
 
         # Busca a propriedade via Cypher Query
