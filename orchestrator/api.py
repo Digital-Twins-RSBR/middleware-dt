@@ -296,6 +296,37 @@ def update_causal_property(
         raise HttpError(400, "Tipo de dado inválido para a propriedade.")
 
 
+@router.get(
+    "/systems/{system_id}/instances/{dtinstance_id}/properties/{property_id}/value/",
+    response=dict,
+    tags=["Orchestrator"],
+    summary="Get the value of a property of a digital twin instance",
+)
+def get_property_value(
+    request,
+    system_id: int,
+    dtinstance_id: int,
+    property_id: int,
+):
+    try:
+        # Verifica se o gêmeo digital e a propriedade existem
+        instance = get_object_or_404(
+            DigitalTwinInstance, model__system_id=system_id, id=dtinstance_id
+        )
+        property_obj = get_object_or_404(
+            DigitalTwinInstanceProperty, id=property_id, dtinstance=instance
+        )
+
+        # Retorna o valor da propriedade
+        return {"value": property_obj.value}
+    except DigitalTwinInstance.DoesNotExist:
+        raise HttpError(404, "Digital Twin Instance not found.")
+    except DigitalTwinInstanceProperty.DoesNotExist:
+        raise HttpError(404, "Property not found.")
+    except Exception as e:
+        raise HttpError(400, str(e))
+
+
 @router.post("/systems/{system_id}/instances/relationships/", tags=["Orchestrator"])
 def create_relationships(
     request, system_id: int, relationships: List[DigitalTwinInstanceRelationshipSchema]
