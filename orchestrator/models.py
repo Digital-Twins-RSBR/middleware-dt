@@ -30,6 +30,7 @@ class DTDLModel(models.Model):
     class Meta:
         verbose_name = "DTDL model"
         verbose_name_plural = "DTDL models"
+        unique_together = ('system', 'dtdl_id')
 
     def save(self, *args, **kwargs):
         create_parsed_specification = False
@@ -259,6 +260,19 @@ class DigitalTwinInstanceRelationship(models.Model):
 
     def __str__(self):
         return f"Relationship {self.relationship} from {self.source_instance} to {self.target_instance}"
+
+    def clean(self):
+        # Verify if the relationship is allowed between the models
+        source_model = self.source_instance.model
+        target_model = self.target_instance.model
+        allowed_relationships = source_model.model_relationships.filter(relationship_id=self.relationship.relationship_id)
+        if not allowed_relationships.exists():
+            raise ValueError(f"Relationship from {source_model.name} to {target_model.name} is not allowed according to the DTDL models.")
+        super().clean()
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
 # [
 #     {
 #       "id": "dtmi:housegen:Room;1",

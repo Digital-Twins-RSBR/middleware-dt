@@ -1,8 +1,8 @@
 from ninja import Router, Schema, ModelSchema
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from facade.models import Property
 from orchestrator.models import DigitalTwinInstanceRelationship, SystemContext, DTDLModel, DigitalTwinInstance, DigitalTwinInstanceProperty
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Dict
 
 class CreateSystemContextSchema(ModelSchema):
     class Meta:
@@ -24,7 +24,7 @@ class PutDTDLModelSchema(ModelSchema):
 
     class Meta:
         model = DTDLModel
-        fields = ['id', 'dtdl_id', 'system', 'name', 'specification', ]
+        fields = ['name', 'specification', ]
 
 class DTDLModelSchema(ModelSchema):
 
@@ -106,9 +106,6 @@ class DigitalTwinInstancePropertySchema(Schema):
             is_causal=instance.causal,  # Chama o método da instância do Digital Twin
         )
     
-class CypherQuerySchema(Schema):
-    query: str
-
 class DTDLModelBatchSchema(Schema):
     name: str
     specification: dict
@@ -125,3 +122,13 @@ class CypherQuerySchema(BaseModel):
             "labels": list(node.labels),
             "properties": dict(node)
         }
+
+class DTDLSpecificationSchema(BaseModel):
+    context: List[str] = Field(..., alias='@context')
+    id: str = Field(..., alias='@id')
+    type: str = Field(..., alias='@type')
+    displayName: str
+    contents: List[Dict[str, Any]]
+
+class CreateMultipleDTDLModelsSchema(BaseModel):
+    specifications: List[DTDLSpecificationSchema]

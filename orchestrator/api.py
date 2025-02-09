@@ -11,6 +11,7 @@ from orchestrator.schemas import (
     CypherQuerySchema,
     DTDLModelBatchSchema,
     DTDLModelIDSchema,
+    DTDLSpecificationSchema,
     DigitalTwinInstancePropertySchema,
     DigitalTwinInstanceRelationshipSchema,
     DigitalTwinPropertyUpdateSchema,
@@ -73,6 +74,29 @@ def create_dtdlmodel(request, system_id, payload: CreateDTDLModelSchema):
     dtdlmodel = DTDLModel.objects.create(**payload_data)
     return dtdlmodel
 
+@router.post(
+    "/systems/{system_id}/dtdlmodels/bulk/", response=List[DTDLModelSchema], tags=["Orchestrator"]
+)
+def create_multiple_dtdlmodels(request, system_id: int, payload: List[DTDLSpecificationSchema]):
+    system = get_object_or_404(SystemContext, id=system_id)
+    created_models = []
+    for spec in payload:
+        payload_data = {
+            "system": system,
+            "name": spec.displayName,
+            "specification": {
+                "@id": spec.id,
+                "@type": spec.type,
+                "@context": spec.context,
+                "contents": spec.contents,
+                "displayName": spec.displayName
+            }
+        }
+        dtdlmodel = DTDLModel.objects.create(**payload_data)
+        created_models.append(dtdlmodel)
+    for dtdlmodel in created_models:
+        dtdlmodel.create_dtdl_models()
+    return created_models
 
 @router.put(
     "/systems/{system_id}/dtdlmodels/{model_id}/",
@@ -134,9 +158,9 @@ def create_dtdlmodels_batch(
 
         return {"created_models": created_models}
     except SystemContext.DoesNotExist:
-        return {"error": "System not found"}, 404
+        raise HttpError(404, "System not found")
     except Exception as e:
-        return {"error": str(e)}, 400
+        raise HttpError(400, str(e))
 
 
 @router.post(
@@ -170,9 +194,9 @@ def create_instances_batch(request, system_id: int, payload: DTDLModelIDSchema):
             )
         return {"created_instances": created_instances}
     except DTDLModel.DoesNotExist:
-        return {"error": f"Model with ID not found in system {system_id}"}, 404
+        raise HttpError(404, f"Model with ID not found in system {system_id}")
     except Exception as e:
-        return {"error": str(e)}, 400
+        raise HttpError(400, str(e))
 
 
 @router.get(
@@ -267,41 +291,69 @@ def update_causal_property(
         return DigitalTwinInstancePropertySchema.from_instance(property_obj)
 
     except DigitalTwinInstanceProperty.DoesNotExist:
-        return {"error": "Propriedade não encontrada."}, 404
+        raise HttpError(404, "Propriedade não encontrada.")
     except ValueError:
-        return {"error": "Tipo de dado inválido para a propriedade."}, 400
+        raise HttpError(400, "Tipo de dado inválido para a propriedade.")
+
+
+@router.get(
+    "/systems/{system_id}/instances/{dtinstance_id}/properties/{property_id}/value/",
+    response=dict,
+    tags=["Orchestrator"],
+    summary="Get the value of a property of a digital twin instance",
+)
+def get_property_value(
+    request,
+    system_id: int,
+    dtinstance_id: int,
+    property_id: int,
+):
+    try:
+        # Verifica se o gêmeo digital e a propriedade existem
+        instance = get_object_or_404(
+            DigitalTwinInstance, model__system_id=system_id, id=dtinstance_id
+        )
+        property_obj = get_object_or_404(
+            DigitalTwinInstanceProperty, id=property_id, dtinstance=instance
+        )
+
+        # Retorna o valor da propriedade
+        return {"value": property_obj.value}
+    except DigitalTwinInstance.DoesNotExist:
+        raise HttpError(404, "Digital Twin Instance not found.")
+    except DigitalTwinInstanceProperty.DoesNotExist:
+        raise HttpError(404, "Property not found.")
+    except Exception as e:
+        raise HttpError(400, str(e))
 
 
 @router.post("/systems/{system_id}/instances/relationships/", tags=["Orchestrator"])
 def create_relationships(
-    request, system_id: int, relationships: list[DigitalTwinInstanceRelationshipSchema]
+    request, system_id: int, relationships: List[DigitalTwinInstanceRelationshipSchema]
 ): 
     try:
-        system_context = SystemContext.objects.get(pk=system_id)
+        system_context = get_object_or_404(SystemContext, pk=system_id)
         for relationship_data in relationships:
             relationship_name = relationship_data.relationship_name
             source_instance_id = relationship_data.source_instance_id
             target_instance_id = relationship_data.target_instance_id
+
             # Verifica se o relacionamento é permitido pelo modelo
             model_relationship = ModelRelationship.objects.filter(
                 dtdl_model__system=system_context, name=relationship_name
             ).first()
 
             if not model_relationship:
-                return {"error": f"Relationship '{relationship_name}' is not defined in the model for system {system_id}."}, 400
+                raise HttpError(400, f"Relationship '{relationship_name}' is not defined in the model for system {system_id}.")
 
             # Verifica se as instâncias digitais de origem e destino existem
-            source_instance = DigitalTwinInstance.objects.filter(
-                id=source_instance_id
-            ).first()
-            target_instance = DigitalTwinInstance.objects.filter(
-                id=target_instance_id
-            ).first()
+            source_instance = DigitalTwinInstance.objects.filter(id=source_instance_id).first()
+            target_instance = DigitalTwinInstance.objects.filter(id=target_instance_id).first()
 
             if not source_instance:
-                return {"error": f"Source Digital Twin Instance with ID {source_instance_id} does not exist."}, 400
+                raise HttpError(400, f"Source Digital Twin Instance with ID {source_instance_id} does not exist.")
             if not target_instance:
-                return {"error": f"Target Digital Twin Instance with ID {target_instance_id} does not exist."}, 400
+                raise HttpError(400, f"Target Digital Twin Instance with ID {target_instance_id} does not exist.")
 
             # Criar ou atualizar o relacionamento da instância digital
             DigitalTwinInstanceRelationship.objects.update_or_create(
@@ -309,12 +361,13 @@ def create_relationships(
                 target_instance=target_instance,
                 defaults={"relationship": model_relationship},
             )
-    except SystemContext.DoesNotExist:
-        return {"error": f"SystemContext with ID {system_id} not found."}, 404
-    except Exception as e:
-        return {"error": str(e)}, 400
 
-    return {"detail": "Relationships created successfully."}
+        return {"detail": "Relationships created successfully."}
+    except SystemContext.DoesNotExist:
+        raise HttpError(404, f"SystemContext with ID {system_id} not found.")
+    except Exception as e:
+        raise HttpError(400, str(e))
+
 
 @router.delete("/systems/{system_id}/relationships/", tags=["Orchestrator"])
 def delete_relationships(request, system_id: int, relationships: List[DigitalTwinInstanceRelationshipSchema]):
@@ -327,16 +380,16 @@ def delete_relationships(request, system_id: int, relationships: List[DigitalTwi
             ).first()
 
             if not model_relationship:
-                return {"error": f"Relationship '{rel.relationship_name}' is not defined in the model for system {system_id}."}, 400
+                raise HttpError(400, f"Relationship '{rel.relationship_name}' is not defined in the model for system {system_id}.")
 
             # Verifica se as instâncias digitais de origem e destino existem
             source_instance = DigitalTwinInstance.objects.filter(id=rel.source_instance_id).first()
             target_instance = DigitalTwinInstance.objects.filter(id=rel.target_instance_id).first()
 
             if not source_instance:
-                return {"error": f"Source Digital Twin Instance with ID {rel.source_instance_id} does not exist."}, 400
+                raise HttpError(400, f"Source Digital Twin Instance with ID {rel.source_instance_id} does not exist.")
             if not target_instance:
-                return {"error": f"Target Digital Twin Instance with ID {rel.target_instance_id} does not exist."}, 400
+                raise HttpError(400, f"Target Digital Twin Instance with ID {rel.target_instance_id} does not exist.")
 
             # Deletar o relacionamento da instância digital
             relationship = DigitalTwinInstanceRelationship.objects.filter(
@@ -350,9 +403,9 @@ def delete_relationships(request, system_id: int, relationships: List[DigitalTwi
 
         return {"detail": "Relationships deleted successfully."}
     except SystemContext.DoesNotExist:
-        return {"error": f"SystemContext with ID {system_id} not found."}, 404
+        raise HttpError(400, f"SystemContext with ID {system_id} not found.")
     except Exception as e:
-        return {"error": str(e)}, 400
+        raise HttpError(400, str(e))
 
 
 @router.post("/systems/{system_id}/instances/query/", tags=["Orchestrator"])
@@ -394,11 +447,11 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
             results_list.append(record_dict)
         return {"results": results_list, "keys": meta}
     except neo4j.exceptions.CypherSyntaxError as e:
-        return {"error": str(e)}, 400
+        raise HttpError(400, str(e))
     except neo4j.exceptions.ServiceUnavailable:
-        return {"error": "Neo4j service is unavailable."}, 400
+        raise HttpError(400, "Neo4j service is unavailable.")
     except Exception as e:
-        return {"error": str(e)}, 400
+        raise HttpError(400, str(e))
 
 
 # Exemplos de queries Cypher para o Neo4j:
