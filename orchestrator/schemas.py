@@ -24,7 +24,7 @@ class PutDTDLModelSchema(ModelSchema):
 
     class Meta:
         model = DTDLModel
-        fields = ['id', 'dtdl_id', 'system', 'name', 'specification', ]
+        fields = ['name', 'specification', ]
 
 class DTDLModelSchema(ModelSchema):
 
