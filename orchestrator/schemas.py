@@ -41,6 +41,7 @@ class CreateDTFromDTDLModelSchema(Schema):
 class DigitalTwinPropertySchema(ModelSchema):
     name: str
     causal: bool
+    type: str
     class Meta:
         model = DigitalTwinInstanceProperty
         fields = ['id', 'dtinstance', 'property','value', 'device_property']
@@ -52,6 +53,10 @@ class DigitalTwinPropertySchema(ModelSchema):
     @staticmethod
     def resolve_causal(obj):
         return obj.property.isCausal()
+    
+    @staticmethod
+    def resolve_type(obj):
+        return obj.property.element_type
 
 class DigitalTwinRelationshipSchema(ModelSchema):
     relationship_name: str
