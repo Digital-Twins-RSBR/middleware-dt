@@ -39,14 +39,54 @@ class CreateDTFromDTDLModelSchema(Schema):
 
 
 class DigitalTwinPropertySchema(ModelSchema):
+    name: str
+    causal: bool
+    type: str
     class Meta:
         model = DigitalTwinInstanceProperty
         fields = ['id', 'dtinstance', 'property','value', 'device_property']
+    
+    @staticmethod
+    def resolve_name(obj):
+        return obj.property.name
+    
+    @staticmethod
+    def resolve_causal(obj):
+        return obj.property.isCausal()
+    
+    @staticmethod
+    def resolve_type(obj):
+        return obj.property.element_type
 
 class DigitalTwinRelationshipSchema(ModelSchema):
+    relationship_name: str
+
     class Meta:
         model = DigitalTwinInstanceRelationship
         fields = ['id', 'source_instance', 'target_instance', 'relationship']
+    
+    @staticmethod
+    def resolve_relationship_name(obj):
+        return obj.relationship.name
+
+class DigitalTwinInstancePropertySchema(Schema):
+
+    id: int
+    property: str
+    value: Any  # Aceita qualquer tipo para evitar erros de validação
+    is_causal: bool
+
+    @staticmethod
+    def from_instance(instance):
+        """
+        Converte a instância de `DigitalTwinInstanceProperty` para o schema.
+        """
+        return DigitalTwinInstancePropertySchema(
+            id=instance.id,
+            property=instance.property.name,  # Certifique-se que `name` existe
+            value=str(instance.value) if instance.value is not None else None,  # Converte para string
+            is_causal=instance.causal,  # Chama o método da instância do Digital Twin
+        )
 
 class DigitalTwinInstanceSchema(ModelSchema):
     digitaltwininstanceproperty_set: List[DigitalTwinPropertySchema] = []
@@ -76,7 +116,7 @@ class DigitalTwinInstanceRelationshipSchema(Schema):
     target_instance_id: int
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "relationship_name": "contains",
                 "source_instance_id": 1,    
@@ -87,24 +127,6 @@ class DigitalTwinInstanceRelationshipSchema(Schema):
 class DigitalTwinPropertyUpdateSchema(Schema):
     value: Any
 
-class DigitalTwinInstancePropertySchema(Schema):
-
-    id: int
-    property: str
-    value: Any  # Aceita qualquer tipo para evitar erros de validação
-    is_causal: bool
-
-    @staticmethod
-    def from_instance(instance):
-        """
-        Converte a instância de `DigitalTwinInstanceProperty` para o schema.
-        """
-        return DigitalTwinInstancePropertySchema(
-            id=instance.id,
-            property=instance.property.name,  # Certifique-se que `name` existe
-            value=str(instance.value) if instance.value is not None else None,  # Converte para string
-            is_causal=instance.causal,  # Chama o método da instância do Digital Twin
-        )
     
 class DTDLModelBatchSchema(Schema):
     name: str
