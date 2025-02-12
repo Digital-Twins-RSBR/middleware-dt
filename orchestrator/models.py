@@ -1,6 +1,7 @@
+from enum import unique
 from pickle import FALSE
 from typing import Iterable
-from django.db import models
+from django.db import IntegrityError, models
 import requests
 from requests.exceptions import RequestException
 
@@ -99,15 +100,25 @@ class DTDLModel(models.Model):
 
             if source_model and target_model:
                 # Cria ou atualiza o relacionamento entre os modelos
-                ModelRelationship.objects.update_or_create(
-                    dtdl_model=self,
-                    relationship_id=relationship_data['id'],
-                    defaults={
-                        'name': relationship_data['name'],
-                        'source': self.dtdl_id,
-                        'target': target_id,
-                    }
-                )
+                try:
+                    ModelRelationship.objects.update_or_create(
+                        dtdl_model=self,
+                        relationship_id= relationship_data['id'],
+                        defaults={
+                            'name': relationship_data['name'],
+                            'source': self.dtdl_id,
+                            'target': target_id,
+                        }
+                    )
+                except IntegrityError:
+                    existing_relationship = ModelRelationship.objects.get(
+                        dtdl_model=self,
+                        name=relationship_data['name'],
+                        source=self.dtdl_id,
+                        target=target_id
+                    )
+                    existing_relationship.relationship_id = relationship_data['id']
+                    existing_relationship.save()
             else:
                 # Caso não encontre o source_model ou target_model, pode-se logar ou levantar um erro
                 print(f"Warning: Unable to find source or target models for relationship {relationship_data['id']}")
@@ -165,6 +176,7 @@ class ModelRelationship(models.Model):
     class Meta:
         verbose_name = "Model relationship"
         verbose_name_plural = "Model relationships"
+        unique_together = ('dtdl_model','name', 'source', 'target')
 
     def __str__(self):
         return self.name

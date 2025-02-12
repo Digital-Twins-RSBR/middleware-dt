@@ -50,6 +50,18 @@ def create_system(request, payload: CreateSystemContextSchema):
     system = SystemContext.objects.create(**payload_data)
     return system
 
+@router.put(
+    "/systems/{system_id}/",
+    response=SystemContextSchema,
+    tags=["Orchestrator"],
+)
+def update_system(request, system_id: int, payload: CreateSystemContextSchema):
+    system = get_object_or_404(SystemContext, id=system_id)
+    for attr, value in payload.dict().items():
+        setattr(system, attr, value)
+    system.save()
+    return system
+
 
 @router.get(
     "/systems/{system_id}/", response=SystemContextSchema, tags=["Orchestrator"]
@@ -99,14 +111,14 @@ def create_multiple_dtdlmodels(request, system_id: int, payload: List[DTDLSpecif
     return created_models
 
 @router.put(
-    "/systems/{system_id}/dtdlmodels/{model_id}/",
+    "/systems/{system_id}/dtdlmodels/{dtdlmodel_id}/",
     response=DTDLModelSchema,
     tags=["Orchestrator"],
 )
 def update_dtdlmodel(
-    request, system_id: int, model_id: int, payload: PutDTDLModelSchema
+    request, system_id: int, dtdlmodel_id: int, payload: PutDTDLModelSchema
 ):
-    dtdlmodel = DTDLModel.objects.filter(system_id=system_id, id=model_id).first()
+    dtdlmodel = DTDLModel.objects.filter(system_id=system_id, id=dtdlmodel_id).first()
     if not dtdlmodel:
         raise Http404("No DTDLModel matches the given query.")
 
@@ -186,8 +198,8 @@ def create_dtinstance(request, system_id: int, payload: CreateDTFromDTDLModelSch
 def create_instances_batch(request, system_id: int, payload: DTDLModelIDSchema):
     try:
         created_instances = []
-        for model_id in payload.dtdl_model_ids:
-            dtdl_model = DTDLModel.objects.get(id=model_id, system_id=system_id)
+        for id_model in payload.dtdl_model_ids:
+            dtdl_model = DTDLModel.objects.get(id=id_model, system_id=system_id)
             dt_instance = dtdl_model.create_dt_instance()
             created_instances.append(
                 {"id": dt_instance.id, "model_name": dtdl_model.name, "properties": []}
