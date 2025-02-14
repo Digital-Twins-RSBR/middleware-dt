@@ -71,7 +71,7 @@ class ModelElementAdmin(admin.ModelAdmin):
 
 @admin.register(ModelRelationship)
 class ModelRelationshipAdmin(admin.ModelAdmin):
-    list_display = ('dtdl_model', 'relationship_id', 'name', 'target')
+    list_display = ('dtdl_model', 'relationship_id', 'name', 'source', 'target')
 
 class DigitalTwinInstancePropertyInline(admin.TabularInline):
     form = DigitalTwinInstancePropertyInlineForm

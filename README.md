@@ -203,6 +203,11 @@ python manage.py listen_gateway
 A API do middleware estará disponível para operações de consulta, criação e relação entre dispositivos físicos e seus gêmeos digitais. A documentação detalhada dos endpoints será disponibilizada conforme o projeto evoluir.
 
 
+## 📖 Leitura Complementar
+
+Para avaliação usando do Middts criamos um cenário no [HomeAssistant](https://www.home-assistant.io/). Para mais informações  consulte o [Cenário de testes usando o HomeAssistant](docs/HomeAssistant.md).
+
+
 <!-- # Caso de teste:
 
 1) Cadastrando dispositivos físicos no gateway IOT(Thingsboard)

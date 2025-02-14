@@ -1,6 +1,7 @@
+from enum import unique
 from pickle import FALSE
 from typing import Iterable
-from django.db import models
+from django.db import IntegrityError, models
 import requests
 from requests.exceptions import RequestException
 
@@ -30,6 +31,7 @@ class DTDLModel(models.Model):
     class Meta:
         verbose_name = "DTDL model"
         verbose_name_plural = "DTDL models"
+        unique_together = ('system', 'dtdl_id')
 
     def save(self, *args, **kwargs):
         create_parsed_specification = False
@@ -98,15 +100,25 @@ class DTDLModel(models.Model):
 
             if source_model and target_model:
                 # Cria ou atualiza o relacionamento entre os modelos
-                ModelRelationship.objects.update_or_create(
-                    dtdl_model=self,
-                    relationship_id=relationship_data['id'],
-                    defaults={
-                        'name': relationship_data['name'],
-                        'source': self.dtdl_id,
-                        'target': target_id,
-                    }
-                )
+                try:
+                    ModelRelationship.objects.update_or_create(
+                        dtdl_model=self,
+                        relationship_id= relationship_data['id'],
+                        defaults={
+                            'name': relationship_data['name'],
+                            'source': self.dtdl_id,
+                            'target': target_id,
+                        }
+                    )
+                except IntegrityError:
+                    existing_relationship = ModelRelationship.objects.get(
+                        dtdl_model=self,
+                        name=relationship_data['name'],
+                        source=self.dtdl_id,
+                        target=target_id
+                    )
+                    existing_relationship.relationship_id = relationship_data['id']
+                    existing_relationship.save()
             else:
                 # Caso não encontre o source_model ou target_model, pode-se logar ou levantar um erro
                 print(f"Warning: Unable to find source or target models for relationship {relationship_data['id']}")
@@ -126,7 +138,7 @@ class DTDLModel(models.Model):
             source_instance = DigitalTwinInstance.objects.filter(model__name=relationship.source).first()
             target_instance = DigitalTwinInstance.objects.filter(model__name=relationship.target).first()
             if source_instance and target_instance:
-                DigitalTwinInstanceRelationship.objects.create(
+                DigitalTwinInstanceRelationship.objects.update_or_create(
                     source_instance=source_instance,
                     target_instance=target_instance,
                     relationship=relationship
@@ -164,6 +176,7 @@ class ModelRelationship(models.Model):
     class Meta:
         verbose_name = "Model relationship"
         verbose_name_plural = "Model relationships"
+        unique_together = ('dtdl_model','name', 'source', 'target')
 
     def __str__(self):
         return self.name
@@ -224,7 +237,7 @@ class DigitalTwinInstanceProperty(models.Model):
                             device_property = self.device_property
                             device_property.value=self.value
                             device_property.save()
-                        except:
+                        except Exception:
                             self.value = old.value
                 else:
                     self.value = old.value
@@ -255,9 +268,23 @@ class DigitalTwinInstanceRelationship(models.Model):
     class Meta:
         verbose_name = "Digital twin instance relationship"
         verbose_name_plural = "Digital twin instance relationships"
+        unique_together = ('source_instance', 'target_instance', 'relationship')
 
     def __str__(self):
         return f"Relationship {self.relationship} from {self.source_instance} to {self.target_instance}"
+
+    def clean(self):
+        # Verify if the relationship is allowed between the models
+        source_model = self.source_instance.model
+        target_model = self.target_instance.model
+        allowed_relationships = source_model.model_relationships.filter(relationship_id=self.relationship.relationship_id)
+        if not allowed_relationships.exists():
+            raise ValueError(f"Relationship from {source_model.name} to {target_model.name} is not allowed according to the DTDL models.")
+        super().clean()
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
 # [
 #     {
 #       "id": "dtmi:housegen:Room;1",

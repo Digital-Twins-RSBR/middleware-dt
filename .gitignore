@@ -12,3 +12,4 @@ settings.py
 .settings/*
 *__pycache__*
 .env
+__pycache__/
