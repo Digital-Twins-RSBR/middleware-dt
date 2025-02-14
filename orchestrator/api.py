@@ -5,6 +5,8 @@ from pydantic import ValidationError
 
 from facade.models import Property
 from orchestrator.schemas import (
+    AssociatePropertySchema,
+    AssociatedPropertySchema,
     BindDTInstancePropertieDeviceSchema,
     CreateDTFromDTDLModelSchema,
     CypherQuerySchema,
@@ -12,6 +14,7 @@ from orchestrator.schemas import (
     DTDLModelIDSchema,
     DTDLSpecificationSchema,
     DigitalTwinInstancePropertySchema,
+    DigitalTwinInstanceRelationshipModelSchema,
     DigitalTwinInstanceRelationshipSchema,
     DigitalTwinPropertyUpdateSchema,
     PutDTDLModelSchema,
@@ -337,62 +340,18 @@ def get_property_value(
         raise HttpError(400, str(e))
 
 
-@router.post("/systems/{system_id}/instances/query/", tags=["Orchestrator"])
-def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
-    def serialize_neo4j_value(value):
-        if isinstance(value, neo4j.graph.Node):
-            return {
-                "identity": value.id,
-                "labels": list(value.labels),
-                "properties": dict(value),
-                "elementId": value.element_id
-            }
-        elif isinstance(value, neo4j.graph.Relationship):
-            return {
-                "id": value.id,
-                "type": value.type,
-                "start_node": value.start_node.id,
-                "end_node": value.end_node.id,
-                "properties": dict(value),
-                "elementId": value.element_id
-            }
-        elif isinstance(value, neo4j.graph.Path):
-            return {
-                "nodes": [serialize_neo4j_value(node) for node in value.nodes],
-                "relationships": [serialize_neo4j_value(rel) for rel in value.relationships]
-            }
-        elif isinstance(value, list):
-            return [serialize_neo4j_value(item) for item in value]
-        elif isinstance(value, dict):
-            return {key: serialize_neo4j_value(val) for key, val in value.items()}
-        else:
-            return value
-
+@router.get("/systems/{system_id}/relationships/", tags=["Orchestrator"], response=List[DigitalTwinInstanceRelationshipModelSchema])
+def list_relationships(request, system_id: int):
     try:
-        system_context = SystemContext.objects.get(pk=system_id)
-        # Modifica a consulta Cypher para incluir o filtro system_id e trazer os relacionamentos
-        filtered_query = f"""
-        MATCH (system:SystemContext {{name: '{system_context.name}'}})-[:CONTAINS]->(dt:DigitalTwin)
-        WITH dt
-        {payload.query}
-        """
-        results, meta = db.cypher_query(filtered_query)
-        # Convert results to a list of dictionaries
-        results_list = []
-        for record in results:
-            if isinstance(record, list):
-                record_dict = [serialize_neo4j_value(item) for item in record]
-            else:
-                record_dict = {key: serialize_neo4j_value(value) for key, value in record.items()}
-            results_list.append(record_dict)
-        return {"results": results_list, "keys": meta}
-    except neo4j.exceptions.CypherSyntaxError as e:
-        raise HttpError(400, str(e))
-    except neo4j.exceptions.ServiceUnavailable:
-        raise HttpError(400, "Neo4j service is unavailable.")
+        system_context = get_object_or_404(SystemContext, pk=system_id)
+        relationships = DigitalTwinInstanceRelationship.objects.filter(
+            source_instance__model__system=system_context
+        )
+        return relationships
+    except SystemContext.DoesNotExist:
+        raise HttpError(404, f"SystemContext with ID {system_id} not found.")
     except Exception as e:
         raise HttpError(400, str(e))
-
 
 @router.post("/systems/{system_id}/instances/relationships/", tags=["Orchestrator"])
 def create_relationships(
@@ -474,6 +433,111 @@ def delete_relationships(request, system_id: int, relationships: List[DigitalTwi
     except Exception as e:
         raise HttpError(400, str(e))
 
+@router.get(
+    "/systems/{system_id}/instances/properties/connected/",
+    response=List[AssociatedPropertySchema],
+    tags=["Orchestrator"],
+)
+def list_associated_properties(request, system_id: int):
+    try:
+        properties = DigitalTwinInstanceProperty.objects.filter(
+            dtinstance__model__system_id=system_id, device_property__isnull=False
+        )
+        return properties
+    except Exception as e:
+        raise HttpError(400, str(e))
+
+
+@router.post(
+    "/systems/{system_id}/instances/{dtinstance_id}/properties/{property_id}/connect/",
+    response=AssociatePropertySchema,
+    tags=["Orchestrator"],
+)
+def associate_property(
+    request,
+    system_id: int,
+    dtinstance_id: int,
+    property_id: int,
+    payload: BindDTInstancePropertieDeviceSchema,
+):
+    try:
+        dtinstance = get_object_or_404(
+            DigitalTwinInstance, model__system_id=system_id, id=dtinstance_id
+        )
+        dtproperty = get_object_or_404(
+            DigitalTwinInstanceProperty, id=property_id, dtinstance=dtinstance
+        )
+        device_property = get_object_or_404(Property, id=payload.device_property_id)
+        
+        dtproperty.device_property = device_property
+        dtproperty.save()
+        
+        return dtproperty
+    except DigitalTwinInstance.DoesNotExist:
+        raise HttpError(404, "Digital Twin Instance not found.")
+    except DigitalTwinInstanceProperty.DoesNotExist:
+        raise HttpError(404, "Digital Twin Instance Property not found.")
+    except Property.DoesNotExist:
+        raise HttpError(404, "Device Property not found.")
+    except Exception as e:
+        raise HttpError(400, str(e))
+
+
+@router.post("/systems/{system_id}/instances/query/", tags=["Orchestrator"])
+def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
+    def serialize_neo4j_value(value):
+        if isinstance(value, neo4j.graph.Node):
+            return {
+                "identity": value.id,
+                "labels": list(value.labels),
+                "properties": dict(value),
+                "elementId": value.element_id
+            }
+        elif isinstance(value, neo4j.graph.Relationship):
+            return {
+                "id": value.id,
+                "type": value.type,
+                "start_node": value.start_node.id,
+                "end_node": value.end_node.id,
+                "properties": dict(value),
+                "elementId": value.element_id
+            }
+        elif isinstance(value, neo4j.graph.Path):
+            return {
+                "nodes": [serialize_neo4j_value(node) for node in value.nodes],
+                "relationships": [serialize_neo4j_value(rel) for rel in value.relationships]
+            }
+        elif isinstance(value, list):
+            return [serialize_neo4j_value(item) for item in value]
+        elif isinstance(value, dict):
+            return {key: serialize_neo4j_value(val) for key, val in value.items()}
+        else:
+            return value
+
+    try:
+        system_context = SystemContext.objects.get(pk=system_id)
+        # Modifica a consulta Cypher para incluir o filtro system_id e trazer os relacionamentos
+        filtered_query = f"""
+        MATCH (system:SystemContext {{name: '{system_context.name}'}})-[:CONTAINS]->(dt:DigitalTwin)
+        WITH dt
+        {payload.query}
+        """
+        results, meta = db.cypher_query(filtered_query)
+        # Convert results to a list of dictionaries
+        results_list = []
+        for record in results:
+            if isinstance(record, list):
+                record_dict = [serialize_neo4j_value(item) for item in record]
+            else:
+                record_dict = {key: serialize_neo4j_value(value) for key, value in record.items()}
+            results_list.append(record_dict)
+        return {"results": results_list, "keys": meta}
+    except neo4j.exceptions.CypherSyntaxError as e:
+        raise HttpError(400, str(e))
+    except neo4j.exceptions.ServiceUnavailable:
+        raise HttpError(400, "Neo4j service is unavailable.")
+    except Exception as e:
+        raise HttpError(400, str(e))
 
 # Exemplos de queries Cypher para o Neo4j:
 # Listar todos os Digital Twins:

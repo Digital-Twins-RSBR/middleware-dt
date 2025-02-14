@@ -110,6 +110,17 @@ class BindDTInstancePropertieDeviceSchema(Schema):
     property_id : int
     device_property_id : int
 
+class DigitalTwinInstanceRelationshipModelSchema(ModelSchema):
+    relationship_name: str
+
+    class Meta:
+        model = DigitalTwinInstanceRelationship
+        fields = ['id', 'source_instance', 'target_instance', 'relationship']
+
+    @staticmethod
+    def resolve_relationship_name(obj):
+        return obj.relationship.name
+
 class DigitalTwinInstanceRelationshipSchema(Schema):
     relationship_name: str
     source_instance_id: int
@@ -155,3 +166,35 @@ class DTDLSpecificationSchema(BaseModel):
 
 class CreateMultipleDTDLModelsSchema(BaseModel):
     specifications: List[DTDLSpecificationSchema]
+
+class AssociatedPropertySchema(ModelSchema):
+    property_name: str
+    device_property_name: str
+
+    class Meta:
+        model = DigitalTwinInstanceProperty
+        fields = ['id', 'value', 'dtinstance', 'property', 'device_property']
+
+    @staticmethod
+    def resolve_property_name(obj):
+        return obj.property.name
+    
+    @staticmethod
+    def resolve_device_property_name(obj):
+        return obj.device_property.name if obj.device_property else ''
+    
+class AssociatePropertySchema(ModelSchema):
+    property_name: str
+    device_property_name: str
+
+    class Meta:
+        model = DigitalTwinInstanceProperty
+        fields = ['id', 'value', 'property', 'device_property']
+
+    @staticmethod
+    def resolve_property_name(obj):
+        return obj.property.name
+    
+    @staticmethod
+    def resolve_device_property_name(obj):
+        return obj.device_property.name if obj.device_property else ''
