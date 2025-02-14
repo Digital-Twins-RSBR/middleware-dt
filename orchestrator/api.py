@@ -1,4 +1,3 @@
-from django.http import Http404
 from django.shortcuts import get_object_or_404
 import neo4j
 import neo4j.exceptions
@@ -38,7 +37,6 @@ from neomodel import db
 from typing import List
 
 router = Router()
-
 
 @router.post(
     "/systems/",

@@ -16,14 +16,12 @@ api = NinjaAPI()
 
 @router.get("/devices/", response={200: list[DeviceSchema]}, tags=['Facade'])
 def list_devices(request):
-    user = request.user
-    devices = Device.objects.filter(user=user)
+    devices = Device.objects.all()
     return devices
 
 @router.post("/devices/{device_id}/rpc/", response={200: dict}, tags=['Facade'])
 def call_device_rpc(request, device_id: int, payload: DeviceRPCView):
-    user = request.user
-    device = get_object_or_404(Device, id=device_id, user=user)
+    device = get_object_or_404(Device, id=device_id)
     gateway = device.gateway
     url = f"{gateway.url}/api/plugins/rpc/oneway/{device.identifier}"
     headers = {
@@ -41,7 +39,7 @@ def call_device_rpc(request, device_id: int, payload: DeviceRPCView):
 @router.get("/gatewaysiot/{gateway_id}/discover-devices/", response={200: list[DeviceSchema]}, tags=['Facade'])
 def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Query(...)):
     user = request.user
-    response, status_code = get_jwt_token_gateway(request, gateway_id, request.user)
+    response, status_code = get_jwt_token_gateway(request, gateway_id)
     if status_code == 200:
         token = response['token']
     else:
