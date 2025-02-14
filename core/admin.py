@@ -9,4 +9,4 @@ class DTDLParserClientAdmin(admin.ModelAdmin):
 
 @admin.register(GatewayIOT)
 class GatewayAdmin(admin.ModelAdmin):
-    list_display = ('name', 'url', 'username', 'user')
+    list_display = ('name', 'url', 'username')
