@@ -339,6 +339,63 @@ def get_property_value(
         raise HttpError(400, str(e))
 
 
+@router.post("/systems/{system_id}/instances/query/", tags=["Orchestrator"])
+def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
+    def serialize_neo4j_value(value):
+        if isinstance(value, neo4j.graph.Node):
+            return {
+                "identity": value.id,
+                "labels": list(value.labels),
+                "properties": dict(value),
+                "elementId": value.element_id
+            }
+        elif isinstance(value, neo4j.graph.Relationship):
+            return {
+                "id": value.id,
+                "type": value.type,
+                "start_node": value.start_node.id,
+                "end_node": value.end_node.id,
+                "properties": dict(value),
+                "elementId": value.element_id
+            }
+        elif isinstance(value, neo4j.graph.Path):
+            return {
+                "nodes": [serialize_neo4j_value(node) for node in value.nodes],
+                "relationships": [serialize_neo4j_value(rel) for rel in value.relationships]
+            }
+        elif isinstance(value, list):
+            return [serialize_neo4j_value(item) for item in value]
+        elif isinstance(value, dict):
+            return {key: serialize_neo4j_value(val) for key, val in value.items()}
+        else:
+            return value
+
+    try:
+        system_context = SystemContext.objects.get(pk=system_id)
+        # Modifica a consulta Cypher para incluir o filtro system_id e trazer os relacionamentos
+        filtered_query = f"""
+        MATCH (system:SystemContext {{name: '{system_context.name}'}})-[:CONTAINS]->(dt:DigitalTwin)
+        WITH dt
+        {payload.query}
+        """
+        results, meta = db.cypher_query(filtered_query)
+        # Convert results to a list of dictionaries
+        results_list = []
+        for record in results:
+            if isinstance(record, list):
+                record_dict = [serialize_neo4j_value(item) for item in record]
+            else:
+                record_dict = {key: serialize_neo4j_value(value) for key, value in record.items()}
+            results_list.append(record_dict)
+        return {"results": results_list, "keys": meta}
+    except neo4j.exceptions.CypherSyntaxError as e:
+        raise HttpError(400, str(e))
+    except neo4j.exceptions.ServiceUnavailable:
+        raise HttpError(400, "Neo4j service is unavailable.")
+    except Exception as e:
+        raise HttpError(400, str(e))
+
+
 @router.post("/systems/{system_id}/instances/relationships/", tags=["Orchestrator"])
 def create_relationships(
     request, system_id: int, relationships: List[DigitalTwinInstanceRelationshipSchema]
@@ -416,52 +473,6 @@ def delete_relationships(request, system_id: int, relationships: List[DigitalTwi
         return {"detail": "Relationships deleted successfully."}
     except SystemContext.DoesNotExist:
         raise HttpError(400, f"SystemContext with ID {system_id} not found.")
-    except Exception as e:
-        raise HttpError(400, str(e))
-
-
-@router.post("/systems/{system_id}/instances/query/", tags=["Orchestrator"])
-def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
-    def serialize_neo4j_value(value):
-        if isinstance(value, neo4j.graph.Node):
-            return CypherQuerySchema.serialize_node(value)
-        elif isinstance(value, neo4j.graph.Relationship):
-            return {
-                "id": value.id,
-                "type": value.type,
-                "start_node": serialize_neo4j_value(value.start_node),
-                "end_node": serialize_neo4j_value(value.end_node),
-                "properties": dict(value)
-            }
-        elif isinstance(value, list):
-            return [serialize_neo4j_value(item) for item in value]
-        elif isinstance(value, dict):
-            return {key: serialize_neo4j_value(val) for key, val in value.items()}
-        else:
-            return value
-
-    try:
-        system_context = SystemContext.objects.get(pk=system_id)
-        # Modifica a consulta Cypher para incluir o filtro system_id
-        filtered_query = f"""
-        MATCH (system:SystemContext {{name: '{system_context.name}'}})-[:CONTAINS]->(dt:DigitalTwin)
-        WITH dt
-        {payload.query}
-        """
-        results, meta = db.cypher_query(filtered_query)
-        # Convert results to a list of dictionaries
-        results_list = []
-        for record in results:
-            if isinstance(record, list):
-                record_dict = [serialize_neo4j_value(item) for item in record]
-            else:
-                record_dict = {key: serialize_neo4j_value(value) for key, value in record.items()}
-            results_list.append(record_dict)
-        return {"results": results_list, "keys": meta}
-    except neo4j.exceptions.CypherSyntaxError as e:
-        raise HttpError(400, str(e))
-    except neo4j.exceptions.ServiceUnavailable:
-        raise HttpError(400, "Neo4j service is unavailable.")
     except Exception as e:
         raise HttpError(400, str(e))
 

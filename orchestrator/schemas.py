@@ -142,7 +142,8 @@ class CypherQuerySchema(BaseModel):
         return {
             "identity": node.id,
             "labels": list(node.labels),
-            "properties": dict(node)
+            "properties": dict(node),
+            "elementId": node.element_id
         }
 
 class DTDLSpecificationSchema(BaseModel):
