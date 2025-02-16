@@ -121,7 +121,10 @@ def update_dtdlmodel(
 ):
     dtdlmodel = DTDLModel.objects.filter(system_id=system_id, id=dtdlmodel_id).first()
     if not dtdlmodel:
-        raise Http404("No DTDLModel matches the given query.")
+        raise HttpError(
+                404,
+                "No DTDLModel matches the given query.",
+            )
 
     # Atualiza os campos do modelo DTDL
     for attr, value in payload.dict().items():
@@ -149,7 +152,10 @@ def list_dtdlmodels(request, system_id: int):
 def get_dtdlmodel(request, system_id: int, dtdl_model_id: int):
     dtdlmodel = DTDLModel.objects.filter(system_id=system_id, id=dtdl_model_id).first()
     if not dtdlmodel:
-        raise Http404("No DTDLModel matches the given query.")
+        raise HttpError(
+                404,
+                "No DTDLModel matches the given query.",
+            )
     return dtdlmodel
 
 
@@ -189,7 +195,10 @@ def create_dtinstance(request, system_id: int, payload: CreateDTFromDTDLModelSch
 
     dtdlmodel = DTDLModel.objects.filter(system_id=system_id, id=dtdl_model_id).first()
     if not dtdlmodel:
-        raise Http404("No DTDLModel matches the given query.")
+        raise HttpError(
+                404,
+                "No DTDLModel matches the given query.",
+            )
 
     dt_instance = dtdlmodel.create_dt_instance()
     return dt_instance
@@ -233,7 +242,10 @@ def get_instance(request, system_id: int, dtinstance_id: int):
         model__system_id=system_id, id=dtinstance_id
     ).first()
     if not dtinstance:
-        raise Http404("No DTInstance matches the given query.")
+        raise HttpError(
+                404,
+                "No DTInstance matches the given query.",
+            )
     return dtinstance
 
 
@@ -252,7 +264,10 @@ def bind_dtinstance_device(
         model__system_id=system_id, id=dtinstance_id
     ).first()
     if not dtinstance:
-        raise Http404("No DTInstance matches the given query.")
+        raise HttpError(
+                404,
+                "No DTInstance matches the given query.",
+            )
     payload_data = payload.dict()
     dtproperty = DigitalTwinInstanceProperty.objects.filter(
         id=payload_data["property_id"], dtinstance=dtinstance
@@ -518,8 +533,8 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
         system_context = SystemContext.objects.get(pk=system_id)
         # Modifica a consulta Cypher para incluir o filtro system_id e trazer os relacionamentos
         filtered_query = f"""
-        MATCH (system:SystemContext {{name: '{system_context.name}'}})-[:CONTAINS]->(dt:DigitalTwin)
-        WITH dt
+        MATCH (system:SystemContext {{name: '{system_context.name}'}})-[:CONTAINS]->(dt_filter:DigitalTwin)
+        WITH dt_filter
         {payload.query}
         """
         results, meta = db.cypher_query(filtered_query)
@@ -542,11 +557,14 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
 # Exemplos de queries Cypher para o Neo4j:
 # Listar todos os Digital Twins:
 # {
+#     "query": "MATCH (n) RETURN n LIMIT 25"
+# }
+# {
 #     "query": "MATCH (dt:DigitalTwin) RETURN dt"
 # }
 # Listar todas as propriedades de um Digital Twin específico:
 # {
-#     "query": "MATCH (dt:DigitalTwin {name: 'Light 1'})-[:HAS_PROPERTY]->(prop:TwinProperty) RETURN prop"
+#     "query": "MATCH (dt:DigitalTwin {name: 'LightBulb'})-[:HAS_PROPERTY]->(prop:TwinProperty) RETURN prop"
 # }
 # Listar todos os relacionamentos entre Digital Twins:
 # {
@@ -554,11 +572,11 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
 # }
 # Buscar um Digital Twin específico pelo nome:
 # {
-#     "query": "MATCH (dt:DigitalTwin {name: 'Light 1'}) RETURN dt"
+#     "query": "MATCH (dt:DigitalTwin {name: 'LightBulb'}) RETURN dt"
 # }
 # Listar todas as propriedades e seus valores de um Digital Twin específico:
 # {
-#     "query": "MATCH (dt:DigitalTwin {name: 'Light 1'})-[:HAS_PROPERTY]->(prop:TwinProperty) RETURN prop.name, prop.value"
+#     "query": "MATCH (dt:DigitalTwin {name: 'LightBulb'})-[:HAS_PROPERTY]->(prop:TwinProperty) RETURN prop.name, prop.value"
 # }
 # Listar todos os Digital Twins e suas propriedades:
 # {

@@ -117,3 +117,6 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 
 # Define a conexão com Neo4j
 config.DATABASE_URL = f"bolt://{NEO4J_USER}:{NEO4J_PASSWORD}@{NEO4J_URL}"
+
+SESSION_COOKIE_NAME = 'sessionid_middts'
+CSRF_COOKIE_NAME = 'csrftoken_middts'
