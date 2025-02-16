@@ -64,7 +64,7 @@ class Property(models.Model):
         device = self.device
         gateway = device.gateway
         from facade.api import get_jwt_token_gateway
-        response, status_code = get_jwt_token_gateway(None, gateway.id, gateway.user)
+        response, status_code = get_jwt_token_gateway(None, gateway.id)
         if status_code == 200:
             token = response['token']
             url = f"{gateway.url}/api/plugins/rpc/oneway/{device.identifier}"
