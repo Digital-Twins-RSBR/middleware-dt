@@ -19,6 +19,9 @@ class SystemContext(models.Model):
     class Meta:
         verbose_name = "System context"
         verbose_name_plural = "System contexts"
+    
+    def __str__(self):
+        return self.name
 
 
 class DTDLModel(models.Model):
@@ -32,6 +35,9 @@ class DTDLModel(models.Model):
         verbose_name = "DTDL model"
         verbose_name_plural = "DTDL models"
         unique_together = ('system', 'dtdl_id')
+
+    def __str__(self):
+        return self.name
 
     def save(self, *args, **kwargs):
         create_parsed_specification = False
@@ -54,7 +60,6 @@ class DTDLModel(models.Model):
         spec_id = specification.get('@id')
         if not spec_id:
             raise ValueError(f"Model {self.name} has no '@id' in its specification.")
-        
         payload = {
             "id": spec_id,
             "specification": specification
@@ -246,12 +251,6 @@ class DigitalTwinInstanceProperty(models.Model):
     def causal(self):
         return self.property.isCausal()
 
-    def periodic_read_call(self,interval=5):
-        while True:
-            self.device_property.call_rpc(RPCCallTypes.READ)
-            self.value=self.device_property.value
-            time.sleep(interval)
-    
     @classmethod
     def periodic_read_call(cls, pk, interval=5):
         while True:

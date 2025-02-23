@@ -192,7 +192,7 @@ Esta documentação oferece uma visão geral da arquitetura, instalação e prim
 4. Outros comandos úteis
 - Executar um container de uma API auxiliar parser DTDL:
 ```bash
-docker run -p 8082:8080 -p <porta>:8081 andregustavoo/parserwebapi:latest
+docker run -p 8082:8080 -p andregustavoo/parserwebapi:latest
 ```
 - Ouvir eventos do gateway:
 ```bash
