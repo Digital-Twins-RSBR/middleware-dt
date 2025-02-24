@@ -532,11 +532,11 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
     try:
         system_context = SystemContext.objects.get(pk=system_id)
         # Modifica a consulta Cypher para incluir o filtro system_id e trazer os relacionamentos
-        filtered_query = f"""
-        MATCH (system:SystemContext {{name: '{system_context.name}'}})-[:CONTAINS]->(dt_filter:DigitalTwin)
+        filtered_query = f'''
+        MATCH (system:SystemContext {{system_id: {system_context.system_id}}})-[:CONTAINS]->(dt_filter:DigitalTwin)
         WITH dt_filter
         {payload.query}
-        """
+        '''
         results, meta = db.cypher_query(filtered_query)
         # Convert results to a list of dictionaries
         results_list = []
@@ -581,4 +581,16 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
 # Listar todos os Digital Twins e suas propriedades:
 # {
 #     "query": "MATCH (dt:DigitalTwin)-[:HAS_PROPERTY]->(prop:TwinProperty) RETURN dt.name, prop.name, prop.value"
+# }
+# Listar todos os Digital Twins do modelo LightBulb1 que possuem uma propriedade status = true:
+# {
+#     "query": "MATCH (dt:DigitalTwin {model_name: 'LightBulb1'})-[:HAS_PROPERTY]->(tp:TwinProperty {name: 'status', value: 'true'}) RETURN dt"
+# }
+# Listar todos os Digital Twins que possuem uma propriedade status = true:
+# {
+#     "query": "MATCH (dt:DigitalTwin)-[:HAS_PROPERTY]->(tp:TwinProperty {name: 'status', value: 'true'}) RETURN dt"
+# }
+# Listar Todos os AirConditioners com temperatura abaixo de 20
+# {
+#     "query": "MATCH (dt:DigitalTwin {model_name: 'AirConditioner'})-[:HAS_PROPERTY]->(tp:TwinProperty {name: 'temperature'}) WHERE toFloat(tp.value) < 20 RETURN dt"
 # }

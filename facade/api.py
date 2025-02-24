@@ -44,7 +44,7 @@ def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Q
         token = response['token']
     else:
         return api.create_response(request, response['error'], status=status_code)
-    gateway = get_object_or_404(GatewayIOT, id=gateway_id, user=user)
+    gateway = get_object_or_404(GatewayIOT, id=gateway_id)
     headers = {
         'Content-Type': 'application/json',
         'X-Authorization': f"Bearer {token}"

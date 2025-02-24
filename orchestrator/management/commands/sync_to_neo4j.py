@@ -1,5 +1,5 @@
 from django.core.management.base import BaseCommand
-from orchestrator.models import DigitalTwinInstance, DigitalTwinInstanceProperty, DigitalTwinInstanceRelationship, SystemContext as DjangoSystemContext
+from orchestrator.models import DigitalTwinInstance, SystemContext as DjangoSystemContext
 from orchestrator.neo4jmodels import DigitalTwin, TwinProperty, SystemContext as Neo4jSystemContext
 from neomodel import db
 
@@ -16,11 +16,11 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("All nodes and relationships have been deleted."))
         # Sincroniza Digital Twins e Propriedades
         with db.transaction:
-            for system_context in DjangoSystemContext.objects.all():
+            for system_context in DjangoSystemContext.objects.filter(pk=2):
                 # Cria ou obtém o SystemContext
-                system = Neo4jSystemContext.nodes.get_or_none(name=system_context.name)
+                system = Neo4jSystemContext.nodes.get_or_none(system_id=system_context.id, name=system_context.name)
                 if not system:
-                    system = Neo4jSystemContext(name=system_context.name, description=system_context.description)
+                    system = Neo4jSystemContext(system_id=system_context.id, name=system_context.name, description=system_context.description)
                 system.save()
                 self.stdout.write(self.style.SUCCESS(f"Synced SystemContext: {system.name}"))
                 for twin_instance in DigitalTwinInstance.objects.filter(model__system=system_context):
@@ -28,8 +28,9 @@ class Command(BaseCommand):
                     digital_twin_name = f'{twin_instance.model.name} - {twin_instance.id}'
                     twin = DigitalTwin.nodes.get_or_none(name=digital_twin_name)
                     if not twin:
-                        twin = DigitalTwin(name=digital_twin_name)
+                        twin = DigitalTwin(name=digital_twin_name, dt_id=twin_instance.id, model_name=twin_instance.model.name)
                     twin.description = f"Digital Twin Instance {digital_twin_name}"
+                    twin.model_name = twin_instance.model.name  # Atualiza o model_name
                     twin.save()
                     if not system.digital_twins.is_connected(twin):
                         system.digital_twins.connect(twin)
@@ -53,6 +54,7 @@ class Command(BaseCommand):
                             twin_property = TwinProperty(name=prop.property.name)
                         
                         twin_property.value = str(prop.value)
+                        twin_property.property_id = prop.id
                         twin_property.type = prop.property.element_type
                         twin_property.save()
 
