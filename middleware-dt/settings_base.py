@@ -44,7 +44,7 @@ ROOT_URLCONF = 'middleware-dt.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [os.path.join(BASE_DIR, 'templates')],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -115,6 +115,9 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 
 # Define a conexão com Neo4j
 config.DATABASE_URL = f"bolt://{NEO4J_USER}:{NEO4J_PASSWORD}@{NEO4J_URL}"
+
+SESSION_COOKIE_NAME = 'sessionid_middts'
+CSRF_COOKIE_NAME = 'csrftoken_middts'
 
 DATABASES = {
     'default': {

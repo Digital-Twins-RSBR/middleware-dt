@@ -10,7 +10,6 @@ class GatewayIOT(models.Model):
     url = models.URLField()
     username = models.CharField(max_length=255)
     password = models.CharField(max_length=255)
-    user = models.ForeignKey(User, related_name='gateways', on_delete=models.CASCADE)
 
     def __str__(self):
         return self.name

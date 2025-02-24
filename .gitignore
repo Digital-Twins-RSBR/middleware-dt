@@ -10,5 +10,4 @@ settings.py
 .Spotlight-V100
 .Trashes
 .settings/*
-*__pycache__*
-.env
+__pycache__/

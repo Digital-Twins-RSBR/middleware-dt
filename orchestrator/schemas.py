@@ -1,7 +1,8 @@
 from ninja import Router, Schema, ModelSchema
+from pydantic import BaseModel, Field
 from facade.models import Property
 from orchestrator.models import DigitalTwinInstanceRelationship, SystemContext, DTDLModel, DigitalTwinInstance, DigitalTwinInstanceProperty
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Dict
 
 class CreateSystemContextSchema(ModelSchema):
     class Meta:
@@ -23,7 +24,7 @@ class PutDTDLModelSchema(ModelSchema):
 
     class Meta:
         model = DTDLModel
-        fields = ['id', 'dtdl_id', 'system', 'name', 'specification', ]
+        fields = ['name', 'specification', ]
 
 class DTDLModelSchema(ModelSchema):
 
@@ -38,14 +39,54 @@ class CreateDTFromDTDLModelSchema(Schema):
 
 
 class DigitalTwinPropertySchema(ModelSchema):
+    name: str
+    causal: bool
+    type: str
     class Meta:
         model = DigitalTwinInstanceProperty
         fields = ['id', 'dtinstance', 'property','value', 'device_property']
+    
+    @staticmethod
+    def resolve_name(obj):
+        return obj.property.name
+    
+    @staticmethod
+    def resolve_causal(obj):
+        return obj.property.isCausal()
+    
+    @staticmethod
+    def resolve_type(obj):
+        return obj.property.element_type
 
 class DigitalTwinRelationshipSchema(ModelSchema):
+    relationship_name: str
+
     class Meta:
         model = DigitalTwinInstanceRelationship
         fields = ['id', 'source_instance', 'target_instance', 'relationship']
+    
+    @staticmethod
+    def resolve_relationship_name(obj):
+        return obj.relationship.name
+
+class DigitalTwinInstancePropertySchema(Schema):
+
+    id: int
+    property: str
+    value: Any  # Aceita qualquer tipo para evitar erros de validação
+    is_causal: bool
+
+    @staticmethod
+    def from_instance(instance):
+        """
+        Converte a instância de `DigitalTwinInstanceProperty` para o schema.
+        """
+        return DigitalTwinInstancePropertySchema(
+            id=instance.id,
+            property=instance.property.name,  # Certifique-se que `name` existe
+            value=str(instance.value) if instance.value is not None else None,  # Converte para string
+            is_causal=instance.causal,  # Chama o método da instância do Digital Twin
+        )
 
 class DigitalTwinInstanceSchema(ModelSchema):
     digitaltwininstanceproperty_set: List[DigitalTwinPropertySchema] = []
@@ -69,13 +110,24 @@ class BindDTInstancePropertieDeviceSchema(Schema):
     property_id : int
     device_property_id : int
 
+class DigitalTwinInstanceRelationshipModelSchema(ModelSchema):
+    relationship_name: str
+
+    class Meta:
+        model = DigitalTwinInstanceRelationship
+        fields = ['id', 'source_instance', 'target_instance', 'relationship']
+
+    @staticmethod
+    def resolve_relationship_name(obj):
+        return obj.relationship.name
+
 class DigitalTwinInstanceRelationshipSchema(Schema):
     relationship_name: str
     source_instance_id: int
     target_instance_id: int
 
     class Config:
-        schema_extra = {
+        json_schema_extra = {
             "example": {
                 "relationship_name": "contains",
                 "source_instance_id": 1,    
@@ -86,31 +138,63 @@ class DigitalTwinInstanceRelationshipSchema(Schema):
 class DigitalTwinPropertyUpdateSchema(Schema):
     value: Any
 
-class DigitalTwinInstancePropertySchema(Schema):
-
-    id: int
-    property: str
-    value: Any  # Aceita qualquer tipo para evitar erros de validação
-    is_causal: bool
-
-    @staticmethod
-    def from_instance(instance):
-        """
-        Converte a instância de `DigitalTwinInstanceProperty` para o schema.
-        """
-        return DigitalTwinInstancePropertySchema(
-            id=instance.id,
-            property=instance.property.name,  # Certifique-se que `name` existe
-            value=str(instance.value) if instance.value is not None else None,  # Converte para string
-            is_causal=instance.causal,  # Chama o método da instância do Digital Twin
-        )
     
-class CypherQuerySchema(Schema):
-    query: str
-
 class DTDLModelBatchSchema(Schema):
     name: str
     specification: dict
 
 class DTDLModelIDSchema(Schema):
     dtdl_model_ids: List[int]
+
+class CypherQuerySchema(BaseModel):
+    query: str
+    
+    def serialize_node(node):
+        return {
+            "identity": node.id,
+            "labels": list(node.labels),
+            "properties": dict(node),
+            "elementId": node.element_id
+        }
+
+class DTDLSpecificationSchema(BaseModel):
+    context: List[str] = Field(..., alias='@context')
+    id: str = Field(..., alias='@id')
+    type: str = Field(..., alias='@type')
+    displayName: str
+    contents: List[Dict[str, Any]]
+
+class CreateMultipleDTDLModelsSchema(BaseModel):
+    specifications: List[DTDLSpecificationSchema]
+
+class AssociatedPropertySchema(ModelSchema):
+    property_name: str
+    device_property_name: str
+
+    class Meta:
+        model = DigitalTwinInstanceProperty
+        fields = ['id', 'value', 'dtinstance', 'property', 'device_property']
+
+    @staticmethod
+    def resolve_property_name(obj):
+        return obj.property.name
+    
+    @staticmethod
+    def resolve_device_property_name(obj):
+        return obj.device_property.name if obj.device_property else ''
+    
+class AssociatePropertySchema(ModelSchema):
+    property_name: str
+    device_property_name: str
+
+    class Meta:
+        model = DigitalTwinInstanceProperty
+        fields = ['id', 'value', 'property', 'device_property']
+
+    @staticmethod
+    def resolve_property_name(obj):
+        return obj.property.name
+    
+    @staticmethod
+    def resolve_device_property_name(obj):
+        return obj.device_property.name if obj.device_property else ''

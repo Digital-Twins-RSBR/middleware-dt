@@ -23,6 +23,7 @@ class ModelRelationshipInline(admin.TabularInline):
 @admin.register(DTDLModel)
 class DTDLModelAdmin(admin.ModelAdmin):
     list_display = ('name', 'specification', 'parsed_specification')
+    list_filter = ('system',)
     inlines = [ModelElementInline, ModelRelationshipInline]
     actions = ['send_specification_to_parser', 'reload_dtdl_specification']
 
@@ -68,10 +69,12 @@ class DTDLModelAdmin(admin.ModelAdmin):
 @admin.register(ModelElement)
 class ModelElementAdmin(admin.ModelAdmin):
     list_display = ('dtdl_model', 'element_id', 'element_type', 'name', 'schema', 'supplement_types')
+    list_filter = ('dtdl_model__system', 'dtdl_model', 'element_type')
 
 @admin.register(ModelRelationship)
 class ModelRelationshipAdmin(admin.ModelAdmin):
-    list_display = ('dtdl_model', 'relationship_id', 'name', 'target')
+    list_display = ('dtdl_model', 'relationship_id', 'name', 'source', 'target')
+    list_filter = ('dtdl_model__system', 'dtdl_model')
 
 class DigitalTwinInstancePropertyInline(admin.TabularInline):
     form = DigitalTwinInstancePropertyInlineForm
@@ -86,16 +89,23 @@ class DigitalTwinInstanceRelationshipInline(admin.TabularInline):
 
 @admin.register(DigitalTwinInstance)
 class DigitalTwinInstanceAdmin(admin.ModelAdmin):
+    list_filter = ('model__system', 'model')
     form = DigitalTwinInstanceAdminForm
     inlines = [DigitalTwinInstancePropertyInline, DigitalTwinInstanceRelationshipInline]
 
 @admin.register(DigitalTwinInstanceProperty)
 class DigitalTwinInstancePropertyAdmin(admin.ModelAdmin):
     list_display = ('property', 'get_causal', 'value', 'device_property')
+    list_filter = ('dtinstance__model__system', 'dtinstance__model')
     form = DigitalTwinInstancePropertyAdminForm
 
     def get_causal(request, obj):
         return obj.causal()
     
     get_causal.short_description = 'Causal'
+
+@admin.register(DigitalTwinInstanceRelationship)
+class DigitalTwinInstanceRelationshipAdmin(admin.ModelAdmin):
+    list_display = ('source_instance', 'relationship', 'target_instance')
+    list_filter = ('source_instance__model__system', 'source_instance__model', 'relationship', 'target_instance__model__system', 'target_instance__model')
     

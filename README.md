@@ -192,7 +192,7 @@ Esta documentação oferece uma visão geral da arquitetura, instalação e prim
 4. Outros comandos úteis
 - Executar um container de uma API auxiliar parser DTDL:
 ```bash
-docker run -p 8082:8080 -p <porta>:8081 andregustavoo/parserwebapi:latest
+docker run -p 8082:8080 -p andregustavoo/parserwebapi:latest
 ```
 - Ouvir eventos do gateway:
 ```bash
@@ -201,6 +201,11 @@ python manage.py listen_gateway
 
 ## Uso da API do Middleware
 A API do middleware estará disponível para operações de consulta, criação e relação entre dispositivos físicos e seus gêmeos digitais. A documentação detalhada dos endpoints será disponibilizada conforme o projeto evoluir.
+
+
+## 📖 Leitura Complementar
+
+Para avaliação usando do Middts criamos um cenário no [HomeAssistant](https://www.home-assistant.io/). Para mais informações  consulte o [Cenário de testes usando o HomeAssistant](docs/HomeAssistant.md).
 
 
 <!-- # Caso de teste:
