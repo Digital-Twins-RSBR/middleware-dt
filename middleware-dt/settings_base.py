@@ -120,3 +120,11 @@ config.DATABASE_URL = f"bolt://{NEO4J_USER}:{NEO4J_PASSWORD}@{NEO4J_URL}"
 
 SESSION_COOKIE_NAME = 'sessionid_middts'
 CSRF_COOKIE_NAME = 'csrftoken_middts'
+
+INFLUXDB_HOST = 'localhost'
+INFLUXDB_PORT = 8086
+INFLUXDB_BUCKET = 'iot_data'
+INFLUXDB_ORGANIZATION = 'middts'
+INFLUXDB_TOKEN = 'xxx'
+USE_INFLUX_TO_EVALUATE = True
+

@@ -233,20 +233,15 @@ class DigitalTwinInstanceProperty(models.Model):
         if not self.device_property:
             if self.property.isCausal():
                 self.device_property = Property.objects.filter(device__name=self.property.dtdl_model.name, name=self.property.name, type=self.property.schema).first()
-        if self.id:
-            if self.device_property:
-                old = DigitalTwinInstanceProperty.objects.get(pk=self.id)
-                if self.property.isCausal():
-                    if self.value != old.value:
-                        try:
-                            device_property = self.device_property
-                            device_property.value=self.value
-                            device_property.save()
-                        except Exception:
-                            self.value = old.value
-                else:
-                    self.value = old.value
+        old_value = DigitalTwinInstanceProperty.objects.get(pk=self.id).value if self.id else ''
         super().save(*args, **kwargs)
+        if self.id and self.device_property and self.property.isCausal():
+            device_property = self.device_property
+            device_property.value = self.value
+            device_property.save()
+            if device_property.value != self.value:
+                self.value = old_value if old_value else device_property.value if device_property.value else ''
+                super().save(*args, **kwargs)
 
     def causal(self):
         return self.property.isCausal()
