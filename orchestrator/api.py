@@ -594,3 +594,10 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
 # {
 #     "query": "MATCH (dt:DigitalTwin {model_name: 'AirConditioner'})-[:HAS_PROPERTY]->(tp:TwinProperty {name: 'temperature'}) WHERE toFloat(tp.value) < 20 RETURN dt"
 # }
+# Consulta todos os Digital Twins inativos
+# MATCH (dt:DigitalTwin {active: false}) 
+# RETURN dt
+
+# # Consulta as últimas telemetrias de dispositivos inativos
+# MATCH (dt:DigitalTwin {active: false})-[:HAS_PROPERTY]->(tp:TwinProperty)
+# RETURN dt.name, tp.name, tp.value, tp.timestamp

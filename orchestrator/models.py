@@ -189,13 +189,16 @@ class ModelRelationship(models.Model):
 
 class DigitalTwinInstance(models.Model):
     model = models.ForeignKey(DTDLModel, on_delete=models.CASCADE)
+    active = models.BooleanField(default=True)  # Novo campo para status do dispositivo
+    last_status_check = models.DateTimeField(auto_now=True)  # Para controlar última verificação
+
 
     class Meta:
         verbose_name = "Digital twin instance"
         verbose_name_plural = "Digital twins instances"
 
     def __str__(self):
-        return f"{self.model.name} - {self.id}"
+        return f"{self.model.name} - {self.id} ({'Active' if self.active else 'Inactive'})"
     
     def save(self, *args, **kwargs):
         super().save(*args, **kwargs)

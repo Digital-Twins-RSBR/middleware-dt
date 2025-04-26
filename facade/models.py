@@ -23,6 +23,17 @@ USE_INFLUX_TO_EVALUATE = settings.USE_INFLUX_TO_EVALUATE
 
 class DeviceType(models.Model):
     name = models.CharField(max_length=100, unique=True)
+    inactivityTimeout = models.IntegerField(
+        null=True, 
+        blank=True, 
+        help_text="Timeout in seconds for device inactivity",
+        default=getattr(settings, 'DEFAULT_INACTIVITY_TIMEOUT', 60)
+    )
+
+    def save(self, *args, **kwargs):
+        if self.inactivityTimeout is None:
+            self.inactivityTimeout = getattr(settings, 'DEFAULT_INACTIVITY_TIMEOUT', 60)
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name
@@ -34,16 +45,69 @@ class Device(models.Model):
     type = models.ForeignKey(DeviceType, on_delete=models.CASCADE, null=True)
     gateway = models.ForeignKey(GatewayIOT, related_name='devices', on_delete=models.CASCADE)
     user = models.ForeignKey(User, related_name='devices', on_delete=models.CASCADE)
+    inactivityTimeout = models.IntegerField(null=True, blank=True, help_text="Timeout in seconds for device inactivity. Overrides type's timeout")
 
     def __str__(self):
         return self.name
     
     class Meta:
         unique_together = ('identifier', 'gateway')
+
+    def get_inactivity_timeout(self):
+        """Returns the effective inactivity timeout for this device"""
+        if self.inactivityTimeout is not None:
+            return self.inactivityTimeout
+        if self.type and self.type.inactivityTimeout is not None:
+            return self.type.inactivityTimeout
+        return None
+
+    def sync_inactivity_timeout(self):
+        """Syncs the inactivity timeout with ThingsBoard"""
+        timeout = self.get_inactivity_timeout()
+        if timeout is None:
+            return  # Let ThingsBoard handle default timeout
+            
+        from facade.api import get_jwt_token_gateway
+        response, status_code = get_jwt_token_gateway(None, self.gateway.id)
+        
+        if status_code == 200:
+            token = response['token']
+            url = f"{self.gateway.url}/api/plugins/telemetry/DEVICE/{self.identifier}/SERVER_SCOPE"
+            headers = {
+                "Content-Type": "application/json",
+                "X-Authorization": f"Bearer {token}",
+            }
+            
+            # Format payload as a dictionary
+            payload = {
+                "inactivityTimeout": str(timeout)  # Convert to string as ThingsBoard expects string values
+            }
+            
+            try:
+                response = requests.post(url, json=payload, headers=headers)
+                if response.status_code != 200:
+                    print(f"Failed to sync inactivity timeout for device {self.name}: {response.text}")
+                return response.status_code == 200
+            except Exception as e:
+                print(f"Error syncing inactivity timeout for device {self.name}: {str(e)}")
+                return False
+        return False
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+        if is_new or self.inactivityTimeout is not None:
+            self.sync_inactivity_timeout()
+    
 #ENUM para definir os tipos de chamada. Pode trocar por uma estratégia melhor, se for o caso
 class RPCCallTypes(Enum):
     READ=1
     WRITE=2
+
+class InactivityType(Enum):
+    DEVICE_INACTIVE = "device_inactive"  # Dispositivo marcado como inativo no ThingsBoard
+    CONNECTION_ERROR = "connection_error"  # Erro de conexão com ThingsBoard
+    TIMEOUT = "timeout"  # Tempo limite excedido sem resposta
 
 class Property(models.Model):
     TYPE_CHOICES = (("Boolean", "Boolean"), ("Integer", "Integer", ),("Double", "Double",))
@@ -131,4 +195,47 @@ class Property(models.Model):
             return Decimal(self.value)
         else:
             return self.value
+
+def write_inactivity_event(device, inactivity_type: InactivityType, error_message=None):
+    """
+    Write device inactivity events to InfluxDB with proper formatting
+    """
+    if not USE_INFLUX_TO_EVALUATE or not INFLUXDB_TOKEN:
+        return
         
+    timestamp = int(time.time() * 1000)
+    headers = {
+        "Authorization": f"Token {INFLUXDB_TOKEN}",
+        "Content-Type": "text/plain"
+    }
+    
+    # Get timeout value, default to 0 if None
+    timeout = device.get_inactivity_timeout() or 0
+    
+    # Build tags section - move type to tags for better querying
+    tags = [
+        f"device={device.identifier}",
+        f"type={inactivity_type.value}"
+    ]
+    
+    # Build fields section - use numeric fields for aggregation
+    fields = [
+        f"inactivity_timeout={timeout}i",
+        "status=1i"  # Numeric status field for aggregation
+    ]
+    
+    if error_message:
+        escaped_message = error_message.replace('"', '\\"')
+        fields.append(f'error_message="{escaped_message}"')
+    
+    # Construct measurement in proper InfluxDB line protocol format:
+    # <measurement>,<tags> <fields> <timestamp>
+    measurement = f"device_inactivity,{','.join(tags)} {','.join(fields)} {timestamp}"
+    
+    try:
+        response = requests.post(INFLUXDB_URL, headers=headers, data=measurement)
+        if response.status_code != 204:
+            print(f"Failed to write inactivity event: {response.text}")
+            print(f"Attempted measurement: {measurement}")
+    except Exception as e:
+        print(f"Error writing to InfluxDB: {str(e)}")

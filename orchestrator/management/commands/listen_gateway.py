@@ -7,7 +7,7 @@ import websockets
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from facade.models import Property
-from orchestrator.models import DigitalTwinInstanceProperty
+from orchestrator.models import DigitalTwinInstance, DigitalTwinInstanceProperty
 
 THINGSBOARD_WS_URL_TEMPLATE = "ws://{thingsboard_server}/api/ws/plugins/telemetry?token={your_jwt_token}"
 INFLUXDB_URL = f"http://{settings.INFLUXDB_HOST}:{settings.INFLUXDB_PORT}/api/v2/write?org={settings.INFLUXDB_ORGANIZATION}&bucket={settings.INFLUXDB_BUCKET}&precision=ms"
@@ -104,36 +104,77 @@ class Command(BaseCommand):
                 print("Reconnecting in 10 seconds...")
                 await asyncio.sleep(10)  # Wait before reconnecting
 
+    async def check_device_status(self, device):
+        """Verifica o status do dispositivo no ThingsBoard"""
+        try:
+            jwt_token = await self.get_jwt_token(device)
+            url = f"{device.gateway.url}/api/plugins/telemetry/DEVICE/{device.identifier}/values/attributes"
+            headers = {
+                "Content-Type": "application/json",
+                "X-Authorization": f"Bearer {jwt_token}"
+            }
+            response = await sync_to_async(requests.get)(url, headers=headers)
+            if response.status_code == 200:
+                attributes = response.json()
+                # Verifica o atributo de status do dispositivo
+                for attr in attributes:
+                    if attr.get('key') == 'active':
+                        return attr.get('value', False)
+            return False
+        except Exception as e:
+            print(f"Error checking device status: {e}")
+            return False
+
+    async def update_dt_instance_status(self, device, is_active):
+        """Atualiza o status do DigitalTwinInstance"""
+        dt_instances = await sync_to_async(list)(
+            DigitalTwinInstance.objects.filter(
+                digitaltwininstanceproperty__device_property__device=device
+            ).distinct()
+        )
+        for dt_instance in dt_instances:
+            dt_instance.active = is_active
+            await sync_to_async(dt_instance.save)()
+            print(f"Updated DT Instance {dt_instance.id} status to {is_active}")
+
     async def process_message(self, device, data):
+        # Verifica o status do dispositivo primeiro
+        device_active = await self.check_device_status(device)
+        await self.update_dt_instance_status(device, device_active)
+
+        if not device_active:
+            print(f"Device {device.name} is inactive, skipping telemetry update")
+            return
+
         latest_values = data.get('data')
         if latest_values:
             for key, value in latest_values.items():
                 try:
                     hora, valor = value[0]
+                    # Atualiza a propriedade do dispositivo
                     await sync_to_async(Property.objects.filter(device=device, name=key).update)(value=valor)
-                    # Update the corresponding DigitalTwinInstanceProperty
+                    
+                    # Atualiza o DigitalTwinInstanceProperty apenas se o dispositivo estiver ativo
                     await sync_to_async(DigitalTwinInstanceProperty.objects.filter(
-                        device_property__device=device, 
-                        property__name=key
+                        device_property__device=device,
+                        property__name=key,
+                        dtinstance__active=True
                     ).update)(value=valor)
                     
-                    if self.use_influxdb:
-                        timestamp  = int(time.time() * 1000)
+                    if self.use_influxdb and device_active:
+                        timestamp = int(time.time() * 1000)
                         property = await sync_to_async(lambda: Property.objects.filter(device=device, name=key).first())()
-                        if isinstance(property.get_value(), bool):  # Se for booleano, converter para 0 ou 1
-                            property_value = int(property.get_value())  
+                        if isinstance(property.get_value(), bool):
+                            property_value = int(property.get_value())
                         else:
                             property_value = property.get_value()
+                        # Modificado para enviar apenas received_timestamp quando recebe dados do ThingsBoard
                         data = f"device_data,sensor={device.identifier},source=middts {key}={property_value},received_timestamp={timestamp} {timestamp}"
-                        print(data)
                         response = requests.post(INFLUXDB_URL, headers=headers, data=data)
                         print(f"Response Code: {response.status_code}, Response Text: {response.text}")
-                        print(f"Updated property for {device.name} - {key}: {valor} and sent to InfluxDB")
+                        # await sync_to_async(requests.post)(INFLUXDB_URL, headers=headers, data=data)
+                        print(f"Updated property for {device.name} - {key}: {valor} and sent to InfluxDB with received_timestamp")
 
-                except Property.DoesNotExist:
-                    print(f"No property found for device {device.identifier} with name {key}")
-                except DigitalTwinInstanceProperty.DoesNotExist:
-                    print(f"No DigitalTwinInstanceProperty found for device {device.identifier} with property {key}")
                 except Exception as e:
                     print(f"Error processing property {key} for device {device.name}: {e}")
 

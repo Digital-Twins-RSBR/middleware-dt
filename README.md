@@ -232,3 +232,11 @@ Para avaliação usando do Middts criamos um cenário no [HomeAssistant](https:/
 4) #docker run -p 8082:8080 -p <porta>:8081 andregustavoo/parserwebapi:latest
 5) python manage.py listen_gateway -->
         
+
+
+# Configurações Importantes:
+O device type e o device do módulo facade tem o campo inactivityTimeout que é o responsável por definir o tempo de inatividade de um device. O tempo padrão que o MidDits vai usar pode ser redefinido no Settings a partir da configuração DEFAULT_INACTIVITY_TIMEOUT.
+
+Sensores críticos: 15-30 segundos
+Dispositivos de baixa prioridade: 120-300 segundos
+Dispositivos com bateria limitada: 300-600 segundos
