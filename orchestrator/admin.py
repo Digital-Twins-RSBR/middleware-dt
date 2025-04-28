@@ -89,13 +89,14 @@ class DigitalTwinInstanceRelationshipInline(admin.TabularInline):
 
 @admin.register(DigitalTwinInstance)
 class DigitalTwinInstanceAdmin(admin.ModelAdmin):
-    list_filter = ('model__system', 'model')
+    list_filter = ('model__system', 'model', 'active')
+    list_display = ('id', 'model', 'active')
     form = DigitalTwinInstanceAdminForm
     inlines = [DigitalTwinInstancePropertyInline, DigitalTwinInstanceRelationshipInline]
 
 @admin.register(DigitalTwinInstanceProperty)
 class DigitalTwinInstancePropertyAdmin(admin.ModelAdmin):
-    list_display = ('property', 'get_causal', 'value', 'device_property')
+    list_display = ('property', 'get_causal', 'value', 'device_property', 'dtinstance__active')
     list_filter = ('dtinstance__model__system', 'dtinstance__model')
     form = DigitalTwinInstancePropertyAdminForm
 

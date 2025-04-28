@@ -129,3 +129,13 @@ DATABASES = {
         'PORT': '5432',
     }
 }
+
+INFLUXDB_HOST = 'localhost'
+INFLUXDB_PORT = 8086
+INFLUXDB_BUCKET = 'iot_data'
+INFLUXDB_ORGANIZATION = 'middts'
+INFLUXDB_TOKEN = 'xxx'
+USE_INFLUX_TO_EVALUATE = True
+
+# Digital Twin Settings
+DEFAULT_INACTIVITY_TIMEOUT = 60
