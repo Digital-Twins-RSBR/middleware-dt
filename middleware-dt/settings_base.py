@@ -40,6 +40,7 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'middleware-dt.urls'
 
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
@@ -89,7 +90,6 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = '/static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -105,9 +105,7 @@ SIMPLE_JWT = {
 }
 
 STATIC_URL = '/static/'
-STATICFILES_DIRS = [
-    os.path.join(BASE_DIR, "static"),
-]
+STATIC_ROOT = BASE_DIR + "/" + "static/" 
 
 #### Configuração do NEO4J
 
@@ -120,6 +118,17 @@ config.DATABASE_URL = f"bolt://{NEO4J_USER}:{NEO4J_PASSWORD}@{NEO4J_URL}"
 
 SESSION_COOKIE_NAME = 'sessionid_middts'
 CSRF_COOKIE_NAME = 'csrftoken_middts'
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'nomebanco',
+        'USER': 'postgres',
+        'PASSWORD': 'postgres',
+        'HOST': 'middleware-dt-db-1',
+        'PORT': '5432',
+    }
+}
 
 INFLUXDB_HOST = 'localhost'
 INFLUXDB_PORT = 8086
