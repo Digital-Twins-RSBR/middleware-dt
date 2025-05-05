@@ -3,9 +3,12 @@ from django.contrib import admin
 from django.conf import settings
 from django.urls import path, include
 from core.api import router as core_router
+from core.views import index 
 from facade.api import router as facade_router
 from orchestrator.api import router as orchestrator_router
 from ninja import NinjaAPI, Redoc
+from django.contrib.staticfiles.urls import staticfiles_urlpatterns
+
 import os
 
 # api = NinjaAPI(docs=Redoc())
@@ -23,6 +26,8 @@ for app in settings.INSTALLED_APPS:
             urlpatterns += [path(f'{app}/' , include(f'{app}.urls'))]
 
 urlpatterns += [
+    path('', index, name='index'),
     path('admin/', admin.site.urls),
     path('api/', api.urls),
 ]
+urlpatterns += staticfiles_urlpatterns()

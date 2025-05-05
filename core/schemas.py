@@ -1,4 +1,6 @@
 from ninja import ModelSchema
+from pydantic import BaseModel
+
 from .models import DTDLParserClient, GatewayIOT
 
 class CreateGatewayIOTSchema(ModelSchema):
@@ -9,7 +11,7 @@ class CreateGatewayIOTSchema(ModelSchema):
 class GatewayIOTSchema(ModelSchema):
     class Meta:
         model = GatewayIOT
-        fields = ('id', 'name', 'url', 'username', 'password', 'user')
+        fields = ('id', 'name', 'url', 'username', 'password', )
 
 class CreateDTDLParserClientchema(ModelSchema):
     class Meta:
@@ -20,3 +22,10 @@ class DTDLParserClientchema(ModelSchema):
     class Meta:
         model = DTDLParserClient
         fields = ('id', 'name', 'url')
+
+class TokenSchema(BaseModel):
+    token: str
+
+class TokenPayloadSchema(BaseModel):
+    user_id: int
+    exp: int

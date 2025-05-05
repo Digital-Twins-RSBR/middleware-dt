@@ -192,7 +192,7 @@ Esta documentação oferece uma visão geral da arquitetura, instalação e prim
 4. Outros comandos úteis
 - Executar um container de uma API auxiliar parser DTDL:
 ```bash
-docker run -p 8082:8080 -p <porta>:8081 andregustavoo/parserwebapi:latest
+docker run -p 8082:8080 -p andregustavoo/parserwebapi:latest
 ```
 - Ouvir eventos do gateway:
 ```bash
@@ -201,6 +201,11 @@ python manage.py listen_gateway
 
 ## Uso da API do Middleware
 A API do middleware estará disponível para operações de consulta, criação e relação entre dispositivos físicos e seus gêmeos digitais. A documentação detalhada dos endpoints será disponibilizada conforme o projeto evoluir.
+
+
+## 📖 Leitura Complementar
+
+Para avaliação usando do Middts criamos um cenário no [HomeAssistant](https://www.home-assistant.io/). Para mais informações  consulte o [Cenário de testes usando o HomeAssistant](docs/HomeAssistant.md).
 
 
 <!-- # Caso de teste:
@@ -226,4 +231,83 @@ A API do middleware estará disponível para operações de consulta, criação 
 
 4) #docker run -p 8082:8080 -p <porta>:8081 andregustavoo/parserwebapi:latest
 5) python manage.py listen_gateway -->
-        
+
+
+# Configurações Importantes:
+O device type e o device do módulo facade tem o campo inactivityTimeout que é o responsável por definir o tempo de inatividade de um device. O tempo padrão que o MidDits vai usar pode ser redefinido no Settings a partir da configuração DEFAULT_INACTIVITY_TIMEOUT.
+
+Sensores críticos: 15-30 segundos
+Dispositivos de baixa prioridade: 120-300 segundos
+Dispositivos com bateria limitada: 300-600 segundos
+
+
+# Executando o Projeto com Docker Compose
+
+Como configurar e executar o projeto utilizando Docker Compose. 
+
+## Pré-requisitos
+
+- Docker instalado ([Instruções de instalação](https://docs.docker.com/get-docker/))
+- Docker Compose instalado ([Instruções de instalação](https://docs.docker.com/compose/install/))
+
+## Configuração
+
+### 1. Criar o arquivo `.env`
+
+Crie um arquivo `.env` na raiz do projeto para armazenar as variáveis de ambiente:
+
+```bash
+touch .env
+```
+
+### 2. Adicionar variáveis de ambiente
+
+Adicione as seguintes variáveis no arquivo `.env`:
+
+```env
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=nomebanco
+DATABASE_URL=postgres://postgres:postgres@db:5432/nomebanco
+NEO4J_AUTH=neo4j/password
+
+DEBUG=True
+ALLOWED_HOSTS=0.0.0.0,localhost,127.0.0.1
+```
+
+> **Nota:** Substitua os valores das variáveis conforme necessário para o seu ambiente.
+
+## Executando o projeto
+
+### 1. Iniciar os containers
+
+Execute o comando abaixo para iniciar os containers:
+
+```bash
+docker compose up
+```
+
+### 2. Parar os containers
+
+Para interromper os containers, use a combinação de teclas:
+
+```bash
+Ctrl+C
+```
+
+### 3. Remover os containers
+
+Para remover os containers criados, execute:
+
+```bash
+docker compose down
+```
+
+## Configurações adicionais
+
+### Criar um usuário administrador
+
+Após iniciar os containers, você pode criar um usuário administrador para o sistema com o seguinte comando:
+
+```bash
+docker compose exec middleware python manage.py createsuperuser
