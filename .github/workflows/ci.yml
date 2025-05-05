@@ -24,6 +24,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements/base.txt
 
-      - name: Run Tests
-        run: |
-          pytest
+# TODO quando tiver testes no projeto
+#      - name: Run Tests  
+#        run: |
+#          pytest
