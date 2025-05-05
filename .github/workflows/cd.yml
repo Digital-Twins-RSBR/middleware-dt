@@ -1,4 +1,4 @@
-name: CD for Midits
+name: Midits CD
 
 on:
   push:

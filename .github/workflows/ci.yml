@@ -1,4 +1,4 @@
-name: CI for Midits
+name: Midits CI
 
 on:
   pull_request:
