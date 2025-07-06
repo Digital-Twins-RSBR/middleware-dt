@@ -65,7 +65,7 @@ def sync_relationship_to_neo4j(sender, instance, created, **kwargs):
         source_twin_name = f'{instance.source_instance.model.name} - {instance.source_instance.id}'
         source_twin = DigitalTwin.nodes.get_or_none(name=source_twin_name)
         if not source_twin:
-            source_twin = DigitalTwin(name=source_twin_name, dt_id=instance.dtinstance.id, model_name=instance.source_instance.model.name)
+            source_twin = DigitalTwin(name=source_twin_name, dt_id=instance.source_instance.id, model_name=instance.source_instance.model.name)
             source_twin.description = f"Digital Twin Instance {instance.source_instance.id}"
             source_twin.save()
         if not source_twin.system.is_connected(system):
@@ -75,7 +75,7 @@ def sync_relationship_to_neo4j(sender, instance, created, **kwargs):
         target_twin_name = f'{instance.target_instance.model.name} - {instance.target_instance.id}'
         target_twin = DigitalTwin.nodes.get_or_none(name=target_twin_name)
         if not target_twin:
-            target_twin = DigitalTwin(name=target_twin_name, dt_id=instance.dtinstance.id, model_name=instance.target_instance.model.name)
+            target_twin = DigitalTwin(name=target_twin_name, dt_id=instance.target_instance.id, model_name=instance.target_instance.model.name)
             target_twin.description = f"Digital Twin Instance {instance.target_instance.id}"
             target_twin.save()
         if not target_twin.system.is_connected(system):

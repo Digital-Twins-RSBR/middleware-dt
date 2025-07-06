@@ -4,6 +4,7 @@ from typing import Iterable
 from django.db import IntegrityError, models
 import requests
 from requests.exceptions import RequestException
+from sentence_transformers import SentenceTransformer, util
 
 from core.models import DTDLParserClient
 from facade.models import Device, Property, RPCCallTypes
@@ -189,18 +190,38 @@ class ModelRelationship(models.Model):
 
 class DigitalTwinInstance(models.Model):
     model = models.ForeignKey(DTDLModel, on_delete=models.CASCADE)
-    active = models.BooleanField(default=True)  # Novo campo para status do dispositivo
-    last_status_check = models.DateTimeField(auto_now=True)  # Para controlar última verificação
-
+    name = models.CharField(max_length=255, blank=True, default='')
+    active = models.BooleanField(default=True)
+    last_status_check = models.DateTimeField(auto_now=True)
 
     class Meta:
         verbose_name = "Digital twin instance"
         verbose_name_plural = "Digital twins instances"
+        # unique_together = ('model', 'name')  # Garante unicidade do nome por modelo
 
     def __str__(self):
-        return f"{self.model.name} - {self.id} ({'Active' if self.active else 'Inactive'})"
-    
+        base = f"{self.model.name} - {self.id} ({'Active' if self.active else 'Inactive'})"
+        return f"{base} - {self.name}" if self.name else base
+
     def save(self, *args, **kwargs):
+        # Se name não foi definido, gera automaticamente: <ModelName> <N>
+        if not self.name:
+            # Busca instâncias existentes para este modelo
+            existing_names = (
+                DigitalTwinInstance.objects
+                .filter(model=self.model)
+                .values_list('name', flat=True)
+            )
+            # Busca nomes no formato "<ModelName> <N>"
+            import re
+            pattern = re.compile(rf"^{re.escape(self.model.name)} (\d+)$")
+            used_numbers = [
+                int(m.group(1))
+                for n in existing_names
+                if (m := pattern.match(n or ""))
+            ]
+            next_number = max(used_numbers, default=0) + 1
+            self.name = f"{self.model.name} {next_number}"
         super().save(*args, **kwargs)
         model = self.model
         for element in model.model_elements.all():
@@ -208,7 +229,6 @@ class DigitalTwinInstance(models.Model):
         for relationship in model.model_relationships.all():
             source_instance = DigitalTwinInstance.objects.filter(model=relationship.dtdl_model).first()
             target_instance = DigitalTwinInstance.objects.filter(model__dtdl_id__icontains=relationship.target).first()
-
             if source_instance and target_instance:
                 DigitalTwinInstanceRelationship.objects.update_or_create(
                     source_instance=source_instance,
@@ -232,10 +252,63 @@ class DigitalTwinInstanceProperty(models.Model):
         verbose_name = "Digital twin instance property"
         verbose_name_plural = "Digital twin instances properties"
 
+
+    def suggest_device_binding(self):
+        if self.device_property is not None:
+            return  # já está associado
+
+        # Define modelo semântico
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+
+        # Monta contexto hierárquico do Digital Twin usando os relacionamentos
+        def get_hierarchy_names(dt_instance):
+            names = []
+            current = dt_instance
+            visited = set()
+            # Sobe na hierarquia pelos relacionamentos de origem (pai)
+            while current and current.id not in visited:
+                visited.add(current.id)
+                if current.name:
+                    names.append(current.name)
+                # Busca relacionamento onde este é target (filho)
+                parent_rel = DigitalTwinInstanceRelationship.objects.filter(target_instance=current).first()
+                if parent_rel:
+                    current = parent_rel.source_instance
+                else:
+                    break
+            return list(reversed(names))
+
+        # Monta texto do digital twin property com contexto hierárquico
+        hierarchy = get_hierarchy_names(self.dtinstance)
+        dt_text = " ".join(hierarchy + [self.dtinstance.model.name, self.property.name, self.property.schema or ""])
+
+        dt_embedding = model.encode(dt_text, convert_to_tensor=True)
+
+        best_match = None
+        best_score = 0.0
+
+        # Busca dispositivos sem associação
+        for property in Property.objects.filter(digitaltwininstanceproperty__isnull=True):
+            metadata = property.device.metadata or ""
+            device_text = f"{property.device.name} {property.device.type.name if property.device.type else ''} {metadata} {property.name} {property.type}"
+
+            device_embedding = model.encode(device_text, convert_to_tensor=True)
+            score = float(util.cos_sim(dt_embedding, device_embedding)[0][0])
+
+            if score > best_score:
+                best_match = property
+                best_score = score
+
+        if best_match and best_score >= 0.90:
+            self.device_property = best_match
+            print(f"[MIDDTS] Associação automática: '{self.property.name}' → '{best_match.name}' (score: {best_score:.2f})")
+
     def save(self, *args, **kwargs):
         if not self.device_property:
             if self.property.isCausal():
-                self.device_property = Property.objects.filter(device__name=self.property.dtdl_model.name, name=self.property.name, type=self.property.schema).first()
+                self.suggest_device_binding()
+            #     self.device_property = Property.objects.filter(device__name=self.property.dtdl_model.name, name=self.property.name, type=self.property.schema).first()
+            
         old_value = DigitalTwinInstanceProperty.objects.get(pk=self.id).value if self.id else ''
         super().save(*args, **kwargs)
         if self.id and self.device_property and self.property.isCausal():

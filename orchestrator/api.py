@@ -38,8 +38,50 @@ from ninja.errors import HttpError
 
 from neomodel import db
 from typing import List
+from django.db import transaction
+from ninja import Schema
 
 router = Router()
+
+class ImportDTInstancesSchema(Schema):
+    system_name: str
+    instances: list[dict]  # Estrutura flexível, validação detalhada no código
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "system_name": "Condomínio X",
+                "instances": [
+                    {
+                        "model_name": "Casa",
+                        "name": "Casa 101",
+                        "components": [
+                            {
+                                "model_name": "Quarto",
+                                "name": "Quarto Principal",
+                                "components": [
+                                    {
+                                        "model_name": "Luz",
+                                        "name": "Luz do Quarto",
+                                        "device_property_id": 123
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "model_name": "Casa",
+                        "name": "Casa 102",
+                        "components": [
+                            # ... outros componentes ...
+                        ]
+                    }
+                ]
+            }
+        }
+
+    def __init__(self, **data):
+        super().__init__(**data)
 
 @router.post(
     "/systems/",
@@ -553,6 +595,101 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
         raise HttpError(400, "Neo4j service is unavailable.")
     except Exception as e:
         raise HttpError(400, str(e))
+
+@router.post(
+    "/systems/import/",
+    tags=["Orchestrator"],
+    summary="Importa SystemContext, instâncias DTDL e relacionamentos a partir de um JSON estruturado",
+)
+def import_system_instances(request, payload: ImportDTInstancesSchema):
+    """
+    Recebe um JSON estruturado, cria/recupera SystemContext, instâncias DTDL, componentes e relacionamentos.
+    """
+    try:
+        with transaction.atomic():
+            # 1. Criar ou recuperar o SystemContext
+            system, _ = SystemContext.objects.get_or_create(name=payload.system_name)
+            created_instances = []
+            created_relationships = []
+
+            def create_instance_recursive(instance_data, parent_instance=None):
+                model_name = instance_data.get("model_name")
+                name = instance_data.get("name")
+                device_property_id = instance_data.get("device_property_id", None)
+                components = instance_data.get("components", [])
+
+                # 2. Buscar modelo DTDL
+                dtdl_model = DTDLModel.objects.filter(system=system, name=model_name).first()
+                if not dtdl_model:
+                    raise HttpError(400, f"DTDLModel '{model_name}' não encontrado para o sistema '{system.name}'.")
+
+                # 3. Criar instância do DigitalTwinInstance
+                dt_instance = DigitalTwinInstance.objects.create(model=dtdl_model, name=name)
+                created_instances.append(dt_instance)
+
+                # 4. Binding com device_property se necessário
+                if device_property_id:
+                    # Procurar propriedade causal da instância (assumindo só uma para binding)
+                    dt_property = DigitalTwinInstanceProperty.objects.filter(dtinstance=dt_instance, causal=True).first()
+                    if not dt_property:
+                        raise HttpError(400, f"Instância '{name}' não possui propriedade causal para binding.")
+                    device_property = Property.objects.filter(id=device_property_id).first()
+                    if not device_property:
+                        raise HttpError(400, f"Device Property com id={device_property_id} não encontrada.")
+                    dt_property.device_property = device_property
+                    dt_property.save()
+
+                # 5. Relacionamento com o pai, se houver
+                if parent_instance:
+                    # Buscar relacionamento permitido pelo modelo
+                    model_rel = ModelRelationship.objects.filter(
+                        dtdl_model=dtdl_model,  # Relacionamento do modelo do filho
+                        # Opcional: pode-se filtrar por nome, tipo, etc.
+                    ).first()
+                    if not model_rel:
+                        raise HttpError(400, f"Relacionamento de '{parent_instance.model.name}' para '{model_name}' não definido no modelo.")
+                    rel = DigitalTwinInstanceRelationship.objects.create(
+                        source_instance=parent_instance,
+                        target_instance=dt_instance,
+                        relationship=model_rel,
+                    )
+                    created_relationships.append(rel)
+
+                # 6. Recursão para componentes
+                for comp in components:
+                    create_instance_recursive(comp, parent_instance=dt_instance)
+
+                return dt_instance
+
+            # 7. Criar instâncias de topo
+            for inst in payload.instances:
+                create_instance_recursive(inst)
+
+            # 8. Serializar resposta
+            def serialize_instance(instance):
+                return {
+                    "id": instance.id,
+                    "name": instance.name,
+                    "model": instance.model.name,
+                }
+            def serialize_relationship(rel):
+                return {
+                    "id": rel.id,
+                    "source_instance": rel.source_instance.id,
+                    "target_instance": rel.target_instance.id,
+                    "relationship": rel.relationship.name,
+                }
+
+            return {
+                "system": {"id": system.id, "name": system.name},
+                "instances": [serialize_instance(i) for i in created_instances],
+                "relationships": [serialize_relationship(r) for r in created_relationships],
+            }
+    except HttpError as e:
+        raise e
+    except Exception as e:
+        raise HttpError(400, f"Erro ao importar instâncias: {str(e)}")
+    
 
 # Exemplos de queries Cypher para o Neo4j:
 # Listar todos os Digital Twins:

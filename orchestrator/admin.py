@@ -90,7 +90,7 @@ class DigitalTwinInstanceRelationshipInline(admin.TabularInline):
 @admin.register(DigitalTwinInstance)
 class DigitalTwinInstanceAdmin(admin.ModelAdmin):
     list_filter = ('model__system', 'model', 'active')
-    list_display = ('id', 'model', 'active')
+    list_display = ('name', 'id', 'model', 'active', 'last_status_check')
     form = DigitalTwinInstanceAdminForm
     inlines = [DigitalTwinInstancePropertyInline, DigitalTwinInstanceRelationshipInline]
 

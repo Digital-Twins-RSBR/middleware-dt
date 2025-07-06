@@ -46,6 +46,7 @@ class Device(models.Model):
     gateway = models.ForeignKey(GatewayIOT, related_name='devices', on_delete=models.CASCADE)
     user = models.ForeignKey(User, related_name='devices', on_delete=models.CASCADE)
     inactivityTimeout = models.IntegerField(null=True, blank=True, help_text="Timeout in seconds for device inactivity. Overrides type's timeout")
+    metadata = models.TextField(blank=True, default='')  # Novo campo para armazenar metadados dos labels do ThingsBoard
 
     def __str__(self):
         return self.name
@@ -93,12 +94,96 @@ class Device(models.Model):
                 return False
         return False
 
+    def sync_properties_from_thingsboard(self):
+        """
+        Busca atributos compartilhados do ThingsBoard e cria/atualiza Properties locais.
+        Tenta GET em /api/plugins/telemetry/DEVICE/{deviceId}/SHARED_SCOPE e,
+        se falhar, tenta POST em /api/plugins/telemetry/DEVICE/{deviceId}/values/attributes/SHARED_SCOPE.
+        """
+        from facade.api import get_jwt_token_gateway
+        response, status_code = get_jwt_token_gateway(None, self.gateway.id)
+        if status_code != 200:
+            print(f"Erro ao obter token JWT para gateway {self.gateway}: {response}")
+            return
+
+        token = response['token']
+        headers = {
+            "Content-Type": "application/json",
+            "X-Authorization": f"Bearer {token}",
+        }
+        # 1. Tenta GET (ThingsBoard padrão para shared attributes)
+        url_get = f"{self.gateway.url}/api/plugins/telemetry/DEVICE/{self.identifier}/values/attributes/SHARED_SCOPE"
+        try:
+            resp = requests.get(url_get, headers=headers)
+            if resp.status_code == 200:
+                shared_attrs = resp.json()
+                for attr in shared_attrs:
+                    if attr.get("key") == "properties" and isinstance(attr.get("value"), dict):
+                        props = attr["value"]
+                        for prop_name, prop_data in props.items():
+                            if not isinstance(prop_data, dict):
+                                continue
+                            defaults = {
+                                "type": prop_data.get("type", "Boolean"),
+                                "rpc_read_method": prop_data.get("rpc_read_method", ""),
+                                "rpc_write_method": prop_data.get("rpc_write_method", ""),
+                            }
+                            Property.objects.update_or_create(
+                                device=self,
+                                name=prop_name,
+                                defaults=defaults
+                            )
+        except Exception as e:
+            print(f"Erro ao sincronizar propriedades do ThingsBoard: {str(e)}")
+
+    def sync_metadata_from_thingsboard(self):
+        """
+        Busca os labels do ThingsBoard e popula o campo metadata.
+        """
+        from facade.api import get_jwt_token_gateway
+        response, status_code = get_jwt_token_gateway(None, self.gateway.id)
+        if status_code != 200:
+            print(f"Erro ao obter token JWT para gateway {self.gateway}: {response}")
+            return
+
+        token = response['token']
+        url = f"{self.gateway.url}/api/device/{self.identifier}"
+        headers = {
+            "Content-Type": "application/json",
+            "X-Authorization": f"Bearer {token}",
+        }
+        try:
+            resp = requests.get(url, headers=headers)
+            if resp.status_code == 200:
+                device_data = resp.json()
+                # O ThingsBoard armazena labels em 'label' ou 'labels' (verifique conforme sua configuração)
+                labels = device_data.get('label') or device_data.get('labels')
+                if isinstance(labels, dict):
+                    # Serializa dict para string
+                    self.metadata = " ".join(f"{k}:{v}" for k, v in labels.items())
+                elif isinstance(labels, list):
+                    self.metadata = " ".join(str(l) for l in labels)
+                elif isinstance(labels, str):
+                    self.metadata = labels
+                else:
+                    self.metadata = ""
+                super().save(update_fields=['metadata'])
+            else:
+                print(f"Erro ao buscar labels do ThingsBoard: {resp.text}")
+        except Exception as e:
+            print(f"Erro ao sincronizar labels do ThingsBoard: {str(e)}")
+
     def save(self, *args, **kwargs):
         is_new = self.pk is None
         super().save(*args, **kwargs)
+        # Se não houver nenhuma propriedade associada, busca do ThingsBoard e cria
+        if not Property.objects.filter(device=self).exists():
+            self.sync_properties_from_thingsboard()
+        # Sempre busca e atualiza metadados dos labels
+        self.sync_metadata_from_thingsboard()
         if is_new or self.inactivityTimeout is not None:
             self.sync_inactivity_timeout()
-    
+
 #ENUM para definir os tipos de chamada. Pode trocar por uma estratégia melhor, se for o caso
 class RPCCallTypes(Enum):
     READ=1
@@ -145,8 +230,11 @@ class Property(models.Model):
         old_value = ''
         if self.id:
             old_value = Property.objects.get(id=self.id).value
-        response = self.call_rpc(RPCCallTypes.WRITE)
-        success = response.status_code == 200
+        success = False
+        if self.rpc_write_method or self.rpc_write_method:
+            response = self.call_rpc(RPCCallTypes.WRITE)
+            success = response.status_code == 200
+        
         if success:
             response_json = response.json()
             self.value = str(response_json.get(self.name))
@@ -183,6 +271,7 @@ class Property(models.Model):
                     urltwoway, json={"method": self.rpc_read_method}, headers=headers
                 )
             status_code = response.status_code
+
             #Precisa alterar self.value com o retorno da leitura. Sendo que eu também preciso modficar o atributo value da instância do digital twin. Essa lógica pode ficar no procedimento de registrar as chamadas
         return response
     
