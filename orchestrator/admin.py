@@ -47,9 +47,10 @@ class DTDLModelAdmin(admin.ModelAdmin):
                 parser_client = DTDLParserClient.get_active()
                 parser_url = parser_client.url
                 response = requests.post(parser_url, json=payload)
-
+                
                 if response.status_code in [200, 201]:
-                    DTDLModel.create_dtdl_model_parsed_from_json(obj, response.json())
+                    obj.parsed_specification = response.json()
+                    obj.save()
                     self.message_user(request, f"Specification sent successfully for model {obj.name}.")
                 else:
                     self.message_user(request, f"{response.text}. Status code: {response.status_code}", level='error')

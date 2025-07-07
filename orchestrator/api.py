@@ -33,55 +33,18 @@ from .models import (
     DTDLModel,
     ModelRelationship,
 )
-from ninja import Router
+
+from ninja import Router, Body
 from ninja.errors import HttpError
 
 from neomodel import db
 from typing import List
 from django.db import transaction
 from ninja import Schema
+from sentence_transformers import SentenceTransformer, util
 
 router = Router()
 
-class ImportDTInstancesSchema(Schema):
-    system_name: str
-    instances: list[dict]  # Estrutura flexível, validação detalhada no código
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "system_name": "Condomínio X",
-                "instances": [
-                    {
-                        "model_name": "Casa",
-                        "name": "Casa 101",
-                        "components": [
-                            {
-                                "model_name": "Quarto",
-                                "name": "Quarto Principal",
-                                "components": [
-                                    {
-                                        "model_name": "Luz",
-                                        "name": "Luz do Quarto",
-                                        "device_property_id": 123
-                                    }
-                                ]
-                            }
-                        ]
-                    },
-                    {
-                        "model_name": "Casa",
-                        "name": "Casa 102",
-                        "components": [
-                            # ... outros componentes ...
-                        ]
-                    }
-                ]
-            }
-        }
-
-    def __init__(self, **data):
-        super().__init__(**data)
 
 @router.post(
     "/systems/",
@@ -596,100 +559,89 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
     except Exception as e:
         raise HttpError(400, str(e))
 
-@router.post(
-    "/systems/import/",
-    tags=["Orchestrator"],
-    summary="Importa SystemContext, instâncias DTDL e relacionamentos a partir de um JSON estruturado",
-)
-def import_system_instances(request, payload: ImportDTInstancesSchema):
+
+@router.post("/systems/{system_id}/instances/hierarchical/", tags=["Orchestrator"])
+def create_hierarchical_instances(request, system_id: int, data: dict = Body(...)):
     """
-    Recebe um JSON estruturado, cria/recupera SystemContext, instâncias DTDL, componentes e relacionamentos.
+    Cria instâncias de Digital Twins a partir de um dicionário hierárquico.
+    Cada chave é o nome do twin, e os valores são filhos.
+    Exemplo de payload:
+    {
+        "House 1": {
+            "Room 1": {
+                "LightBulb 1": {},
+                "Air conditioner 1": {}
+            }
+        }
+    }
     """
-    try:
-        with transaction.atomic():
-            # 1. Criar ou recuperar o SystemContext
-            system, _ = SystemContext.objects.get_or_create(name=payload.system_name)
-            created_instances = []
-            created_relationships = []
 
-            def create_instance_recursive(instance_data, parent_instance=None):
-                model_name = instance_data.get("model_name")
-                name = instance_data.get("name")
-                device_property_id = instance_data.get("device_property_id", None)
-                components = instance_data.get("components", [])
 
-                # 2. Buscar modelo DTDL
-                dtdl_model = DTDLModel.objects.filter(system=system, name=model_name).first()
-                if not dtdl_model:
-                    raise HttpError(400, f"DTDLModel '{model_name}' não encontrado para o sistema '{system.name}'.")
+    # Garante que o data é um dicionário (caso venha como JSON string)
+    if not isinstance(data, dict):
+        from django.http import JsonResponse
+        return JsonResponse({"detail": "Payload deve ser um dicionário JSON."}, status=422)
 
-                # 3. Criar instância do DigitalTwinInstance
-                dt_instance = DigitalTwinInstance.objects.create(model=dtdl_model, name=name)
-                created_instances.append(dt_instance)
+    model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+    dtdl_models = list(DTDLModel.objects.filter(system_id=system_id))
+    model_names = [m.name for m in dtdl_models]
+    created_instances = []
 
-                # 4. Binding com device_property se necessário
-                if device_property_id:
-                    # Procurar propriedade causal da instância (assumindo só uma para binding)
-                    dt_property = DigitalTwinInstanceProperty.objects.filter(dtinstance=dt_instance, causal=True).first()
-                    if not dt_property:
-                        raise HttpError(400, f"Instância '{name}' não possui propriedade causal para binding.")
-                    device_property = Property.objects.filter(id=device_property_id).first()
-                    if not device_property:
-                        raise HttpError(400, f"Device Property com id={device_property_id} não encontrada.")
-                    dt_property.device_property = device_property
-                    dt_property.save()
+    def find_best_model(name):
+        if not dtdl_models:
+            return None, 0.0
+        embeddings = model.encode(model_names, convert_to_tensor=True)
+        query_emb = model.encode(name, convert_to_tensor=True)
+        scores = util.cos_sim(query_emb, embeddings)[0]
+        best_idx = int(scores.argmax())
+        best_score = float(scores[best_idx])
+        if best_score > 0.60:
+            return dtdl_models[best_idx], best_score
+        return None, best_score
 
-                # 5. Relacionamento com o pai, se houver
-                if parent_instance:
-                    # Buscar relacionamento permitido pelo modelo
-                    model_rel = ModelRelationship.objects.filter(
-                        dtdl_model=dtdl_model,  # Relacionamento do modelo do filho
-                        # Opcional: pode-se filtrar por nome, tipo, etc.
+    def recursive_create(tree, parent_instance=None):
+        if not isinstance(tree, dict):
+            return
+        for twin_name, children in tree.items():
+            best_model, score = find_best_model(twin_name)
+            if not best_model:
+                print(f"[MIDDTS] Nenhum modelo DTDL sugerido para '{twin_name}' (score={score:.2f})")
+                continue
+            dt_instance = DigitalTwinInstance.objects.create(model=best_model, name=twin_name)
+            created_instances.append(dt_instance)
+            if parent_instance:
+                # Buscar relacionamento permitido entre os modelos
+                # Corrigido: target pode ser apenas o prefixo do dtdl_id (ex: target='dtmi:housegen:Room', dtdl_id='dtmi:housegen:Room;1')
+                rel = ModelRelationship.objects.filter(
+                    dtdl_model=parent_instance.model,
+                    target__in=[
+                        best_model.dtdl_id,
+                        best_model.dtdl_id.split(';')[0]
+                    ]
+                ).first()
+                # Se não achou, tenta por prefixo (startswith)
+                if not rel:
+                    rel = ModelRelationship.objects.filter(
+                        dtdl_model=parent_instance.model,
+                        target__startswith=best_model.dtdl_id.split(';')[0]
                     ).first()
-                    if not model_rel:
-                        raise HttpError(400, f"Relacionamento de '{parent_instance.model.name}' para '{model_name}' não definido no modelo.")
-                    rel = DigitalTwinInstanceRelationship.objects.create(
+                if rel:
+                    DigitalTwinInstanceRelationship.objects.create(
                         source_instance=parent_instance,
                         target_instance=dt_instance,
-                        relationship=model_rel,
+                        relationship=rel
                     )
-                    created_relationships.append(rel)
+                else:
+                    print(f"[MIDDTS] Aviso: Sem relacionamento entre '{parent_instance.model.name}' e '{best_model.name}' (target esperado: '{best_model.dtdl_id.split(';')[0]}')")
+            # Recursão para filhos
+            if isinstance(children, dict) and children:
+                recursive_create(children, dt_instance)
+            DigitalTwinInstanceProperty.associate_all_for_instance(dt_instance)
 
-                # 6. Recursão para componentes
-                for comp in components:
-                    create_instance_recursive(comp, parent_instance=dt_instance)
+    recursive_create(data)
+    # Retorna lista de dicts com id e nome para facilitar debug/consumo
+    return [{"id": inst.id, "name": inst.name, "model": inst.model.name} for inst in created_instances]
 
-                return dt_instance
-
-            # 7. Criar instâncias de topo
-            for inst in payload.instances:
-                create_instance_recursive(inst)
-
-            # 8. Serializar resposta
-            def serialize_instance(instance):
-                return {
-                    "id": instance.id,
-                    "name": instance.name,
-                    "model": instance.model.name,
-                }
-            def serialize_relationship(rel):
-                return {
-                    "id": rel.id,
-                    "source_instance": rel.source_instance.id,
-                    "target_instance": rel.target_instance.id,
-                    "relationship": rel.relationship.name,
-                }
-
-            return {
-                "system": {"id": system.id, "name": system.name},
-                "instances": [serialize_instance(i) for i in created_instances],
-                "relationships": [serialize_relationship(r) for r in created_relationships],
-            }
-    except HttpError as e:
-        raise e
-    except Exception as e:
-        raise HttpError(400, f"Erro ao importar instâncias: {str(e)}")
-    
 
 # Exemplos de queries Cypher para o Neo4j:
 # Listar todos os Digital Twins:

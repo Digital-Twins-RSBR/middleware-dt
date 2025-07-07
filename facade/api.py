@@ -36,7 +36,7 @@ def call_device_rpc(request, device_id: int, payload: DeviceRPCView):
     return api.create_response(request, response.json(), status=response.status_code)
 
 
-@router.get("/gatewaysiot/{gateway_id}/discover-devices/", response={200: list[DeviceSchema]}, tags=['Facade'])
+@router.get("/gatewaysiot/{gateway_id}/discover-devices/", response={200: dict}, tags=['Facade'])
 def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Query(...)):
     user = request.user
     response, status_code = get_jwt_token_gateway(request, gateway_id)
@@ -53,20 +53,32 @@ def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Q
     response = requests.get(url, headers=headers, params=params.dict())
     if response.status_code == 200:
         devices_data = response.json()['data']
-        devices = []
+        created_objs = []
+        updated_count = 0
         for device_data in devices_data:
-            device, created = Device.objects.update_or_create(identifier=device_data['id']['id'],
-                defaults={
-                    'name': device_data['name'],
-                    'identifier': device_data['id']['id'],
-                    'status': 'unknown',
-                    'type': DeviceType.objects.filter(name=device_data['type']).first(),
-                    'gateway': gateway,
-                    'user': user
-                }
-            )
-            devices.append(device)
-        return devices
+            obj = Device.objects.filter(identifier=device_data['id']['id'], gateway=gateway).first()
+            if obj:
+                # Atualiza campos diretamente, sem chamar save customizado
+                obj.name = device_data['name']
+                obj.status = 'unknown'
+                obj.type = DeviceType.objects.filter(name=device_data['type']).first()
+                obj.user = user
+                obj.save_base(raw=True)  # Bypass custom save
+                updated_count += 1
+            else:
+                created_objs.append(Device(
+                    name=device_data['name'],
+                    identifier=device_data['id']['id'],
+                    status='unknown',
+                    type=DeviceType.objects.filter(name=device_data['type']).first(),
+                    gateway=gateway,
+                    user=user
+                ))
+        created_count = 0
+        if created_objs:
+            Device.objects.bulk_create(created_objs)
+            created_count = len(created_objs)
+        return {"created": created_count, "updated": updated_count}
     return api.create_response(request, response.json(), status=response.status_code)
 
 @router.get("/devices/{device_id}/rpc-methods/", response={200: list}, tags=['Facade'])

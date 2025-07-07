@@ -15,8 +15,9 @@ class PropertyInline(admin.TabularInline):
     
 @admin.register(Device)
 class DeviceAdmin(admin.ModelAdmin):
-    list_display = ('name', 'identifier', 'status', 'type', 'gateway', 'user')
+    list_display = ('name', 'identifier', 'status', 'type', 'metadata', 'gateway', 'user')
     list_filter = ('type', 'gateway')
+    search_fields = ('name', 'identifier', 'metadata')
     inlines = [PropertyInline,]
 
 
