@@ -122,19 +122,21 @@ CSRF_COOKIE_NAME = 'csrftoken_middts'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'nomebanco',
-        'USER': 'postgres',
-        'PASSWORD': 'postgres',
-        'HOST': 'middleware-dt-db-1',
-        'PORT': '5432',
+        'NAME': os.getenv("POSTGRES_DB", "middts"),
+        'USER': os.getenv("POSTGRES_USER", "postgres"),
+        'PASSWORD': os.getenv("POSTGRES_PASSWORD", "postgres"),
+        'HOST': os.getenv("POSTGRES_HOST", "middleware-dt-db-1'"),
+        'PORT': os.getenv("POSTGRES_PORT", "5432"),
     }
 }
 
-INFLUXDB_HOST = 'localhost'
-INFLUXDB_PORT = 8086
-INFLUXDB_BUCKET = 'iot_data'
-INFLUXDB_ORGANIZATION = 'middts'
-INFLUXDB_TOKEN = 'xxx'
+# InfluxDB Configuration
+#INFLUXDB_HOST = os.getenv("INFLUXDB_HOST", "localhost")
+INFLUXDB_HOST = os.getenv("INFLUXDB_HOST", "influxdb")
+INFLUXDB_PORT = int(os.getenv("INFLUXDB_PORT", 8086))
+INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "iot_data")
+INFLUXDB_ORGANIZATION = os.getenv("INFLUXDB_ORGANIZATION", "middts")
+INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN", "xxx")
 USE_INFLUX_TO_EVALUATE = True
 
 # Digital Twin Settings
