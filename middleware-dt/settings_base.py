@@ -7,8 +7,9 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 
-DEBUG = True
-ALLOWED_HOSTS = []
+DEBUG = os.getenv("DEBUG", "True").lower() in ("1", "true", "yes", "on")
+ALLOWED_HOSTS = [h for h in os.getenv("ALLOWED_HOSTS", "*").split(",") if h]
+CSRF_TRUSTED_ORIGINS = [o for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o]
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -39,7 +40,7 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
 ]
 
-ROOT_URLCONF = 'middleware-dt.urls'
+ROOT_URLCONF = 'middleware_dt.urls'
 
 
 TEMPLATES = [
@@ -58,16 +59,16 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'middleware-dt.wsgi.application'
+WSGI_APPLICATION = 'middleware_dt.wsgi.application'
 
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'yourdatabase',
-        'USER': 'user',
-        'PASSWORD': 'password',
-        'HOST': 'localhost',
-        'PORT': '5432',
+        'NAME': os.getenv('POSTGRES_DB', 'thingsboard'),
+        'USER': os.getenv('POSTGRES_USER', 'tb'),
+        'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'tb'),
+        'HOST': os.getenv('POSTGRES_HOST', '10.10.2.10'),
+        'PORT': os.getenv('POSTGRES_PORT', '5432'),
     }
 }
 
@@ -113,8 +114,6 @@ STATIC_ROOT = BASE_DIR + "/" + "static/"
 NEO4J_URL = os.getenv("NEO4J_URL", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
-
-# Define a conexão com Neo4j
 config.DATABASE_URL = f"bolt://{NEO4J_USER}:{NEO4J_PASSWORD}@{NEO4J_URL}"
 
 SESSION_COOKIE_NAME = 'sessionid_middts'
