@@ -14,7 +14,7 @@ COPY . .
 
 EXPOSE 8000
 
-ENV DJANGO_SETTINGS_MODULE=middleware-dt.settings
+ENV DJANGO_SETTINGS_MODULE=middleware_dt.settings
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

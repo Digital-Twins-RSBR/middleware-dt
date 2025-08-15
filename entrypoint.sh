@@ -11,6 +11,11 @@ if [ -f "/middleware-dt/.env" ]; then
 	set +a
 fi
 
+# Corrige DJANGO_SETTINGS_MODULE se antigo nome estiver presente
+if [ "${DJANGO_SETTINGS_MODULE}" = "middleware-dt.settings" ]; then
+	export DJANGO_SETTINGS_MODULE=middleware_dt.settings
+fi
+
 # Permite adiar inicialização completa quando usado em topologia (Containernet)
 if [ "${DEFER_START:-0}" = "1" ]; then
 	echo "[entrypoint] DEFER_START=1 -> aguardando start externo (tail infinito)"

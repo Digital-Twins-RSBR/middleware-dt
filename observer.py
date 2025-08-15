@@ -3,7 +3,7 @@ from facade.threadmanager import ThreadsManager
 import os
 
 def main():
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "middleware-dt.settings")
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "middleware_dt.settings")
     max_workers = 1  # Define o número máximo de threads no pool -Avaliar essa questão
     manager = ThreadsManager(max_workers=max_workers)
     lightbulb = DigitalTwinInstanceProperty.objects.filter(pk=4).first()
