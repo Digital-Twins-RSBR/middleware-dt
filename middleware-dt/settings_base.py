@@ -64,8 +64,8 @@ WSGI_APPLICATION = 'middleware_dt.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('POSTGRES_DB', 'thingsboard'),
-        'USER': os.getenv('POSTGRES_USER', 'tb'),
+        'NAME': os.getenv('POSTGRES_DB', 'middts'),
+        'USER': os.getenv('POSTGRES_USER', 'postgres'),
         'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'tb'),
         'HOST': os.getenv('POSTGRES_HOST', '10.10.2.10'),
         'PORT': os.getenv('POSTGRES_PORT', '5432'),

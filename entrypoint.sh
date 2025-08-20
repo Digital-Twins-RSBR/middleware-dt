@@ -48,16 +48,17 @@ for H in $HOST_CANDIDATES; do
 		# Primeiro teste rápido de reachability (ping 1 pacote, 1s timeout)
 		ping -c1 -W1 "$H" >/dev/null 2>&1 || echo "[db-wait][diag] ping falhou para $H"
 		# Exporta H para o processo Python
+		# Test server reachability by connecting to the default 'postgres' database
 		H="$H" python - <<'PY'
-import os, psycopg2, sys, socket
+import os, psycopg2, sys
 host = os.getenv('H') or ''
 if not host:
 	print('host vazio - não definido corretamente')
 	sys.exit(1)
 try:
 	conn = psycopg2.connect(
-		dbname=os.getenv('POSTGRES_DB','thingsboard'),
-		user=os.getenv('POSTGRES_USER','tb'),
+		dbname='postgres',
+		user=os.getenv('POSTGRES_USER','postgres'),
 		password=os.getenv('POSTGRES_PASSWORD','tb'),
 		host=host,
 		port=int(os.getenv('POSTGRES_PORT','5432')),
@@ -94,6 +95,61 @@ elif [ -n "$FOUND_HOST" ] && [ "$(grep '^POSTGRES_HOST=' "$ENV_FILE" | cut -d'='
 fi
 export POSTGRES_HOST="$FOUND_HOST"
 echo "[db-wait] Usando POSTGRES_HOST=$POSTGRES_HOST"
+
+# --- Ensure the configured POSTGRES_DB exists; create and optionally populate from SQL
+SQL_FILE="/middleware-dt/middts.sql"
+if [ -n "$POSTGRES_DB" ]; then
+	echo "[pg-ensure] Garantindo database $POSTGRES_DB exists on $POSTGRES_HOST"
+	# Try using psql CLI if available
+	if command -v psql >/dev/null 2>&1; then
+		PSQL_CMD="psql -h $POSTGRES_HOST -U $POSTGRES_USER -p $POSTGRES_PORT -d postgres -tAc"
+		exists=$($PSQL_CMD "SELECT 1 FROM pg_database WHERE datname='$POSTGRES_DB';" 2>/dev/null | tr -d ' ')
+		if [ "$exists" != "1" ]; then
+			echo "[pg-ensure] Database $POSTGRES_DB não existe -> criando via psql"
+			psql -h $POSTGRES_HOST -U $POSTGRES_USER -p $POSTGRES_PORT -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$POSTGRES_DB\" OWNER $POSTGRES_USER;" || echo "[pg-ensure][WARN] falha ao criar DB via psql"
+		else
+			echo "[pg-ensure] Database $POSTGRES_DB já existe"
+		fi
+		# NOTE: automatic SQL import is disabled in the container.
+		# If you need to restore the middts SQL dump, run the repository Makefile target from the host:
+		#   make restore-middts    (or make restore-scenario)
+		# The topology intentionally avoids restoring large SQL dumps automatically.
+		echo "[pg-ensure] Automatic SQL import skipped in container; use 'make restore-middts' on the host to import the dump."
+	else
+		# Fallback: use psycopg2 from Python to create the DB only (no SQL import here)
+		# Importing large SQL dumps via psycopg2 is fragile; the topology is responsible
+		# for copying and executing the dump (more reliable). We still ensure DB exists.
+		H="$POSTGRES_HOST" DB="$POSTGRES_DB" python - <<'PY'
+import os, sys
+import psycopg2
+host=os.getenv('H')
+db=os.getenv('DB')
+user=os.getenv('POSTGRES_USER','postgres')
+pwd=os.getenv('POSTGRES_PASSWORD','tb')
+port=int(os.getenv('POSTGRES_PORT','5432'))
+try:
+	conn = psycopg2.connect(dbname='postgres', user=user, password=pwd, host=host, port=port)
+	conn.set_isolation_level(0)
+	cur = conn.cursor()
+	cur.execute("SELECT 1 FROM pg_database WHERE datname=%s;", (db,))
+	exists = cur.fetchone()
+	if not exists:
+		print('[pg-ensure] criando database', db)
+		try:
+			cur.execute('CREATE DATABASE %s OWNER %s;' % (db, user))
+		except Exception as e:
+			print('[pg-ensure][WARN] criar DB falhou:', e)
+	else:
+		print('[pg-ensure] database existe')
+	cur.close(); conn.close()
+except Exception as e:
+	print('[pg-ensure][ERROR] ao checar/criar DB:', e)
+	sys.exit(1)
+
+print('[pg-ensure] SQL import skipped in middts container; topology or manual import should run the dump if needed')
+PY
+	fi
+fi
 
 # Ajusta ALLOWED_HOSTS dinamicamente se não definido
 if ! grep -q '^ALLOWED_HOSTS=' "$ENV_FILE" 2>/dev/null; then
