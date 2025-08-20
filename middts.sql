@@ -778,7 +778,7 @@ COPY public.core_dtdlparserclient (id, name, url, active) FROM stdin;
 --
 
 COPY public.core_gatewayiot (id, name, url, username, password) FROM stdin;
-1	Thingsboard Containernet	http://10.0.0.11	tenant@thingsboard.org	tenant
+1	Thingsboard Containernet	http://10.0.0.11:8000	tenant@thingsboard.org	tenant
 \.
 
 
@@ -1173,6 +1173,7 @@ COPY public.django_admin_log (id, action_time, object_id, object_repr, action_fl
 389	2025-08-17 10:12:05.271518-03	2	Light 2	3		10	1
 390	2025-08-17 10:12:05.271523-03	1	Light 1	3		10	1
 391	2025-08-17 10:14:04.227384-03	1	Thingsboard Containernet	2	[{"changed": {"fields": ["Name", "Url", "Username", "Password"]}}]	8	1
+392	2025-08-20 10:22:28.231294-03	1	Thingsboard Containernet	2	[{"changed": {"fields": ["Url"]}}]	8	1
 \.
 
 
@@ -1459,7 +1460,7 @@ SELECT pg_catalog.setval('public.core_gatewayiot_id_seq', 1, true);
 -- Name: django_admin_log_id_seq; Type: SEQUENCE SET; Schema: public; Owner: postgres
 --
 
-SELECT pg_catalog.setval('public.django_admin_log_id_seq', 391, true);
+SELECT pg_catalog.setval('public.django_admin_log_id_seq', 392, true);
 
 
 --
