@@ -71,15 +71,19 @@ services:
       - "8086:8086"
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
-      - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=admin123
+      - DOCKER_INFLUXDB_INIT_USERNAME=middts
+      - DOCKER_INFLUXDB_INIT_PASSWORD=123
       - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORGANIZATION}
       - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET}
       - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN}
     volumes:
+      # persist the Influx runtime data and metadata
       - influxdb_data:/var/lib/influxdb2
+      # ensure the server's data dir is persisted (some images expect /root/.influxdbv2)
+      - influxdb_data_root:/root/.influxdbv2
 
 volumes:
   db_data:
   static_volume:
   influxdb_data:
+  influxdb_data_root:
