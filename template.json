@@ -1,0 +1,18 @@
+{
+   "House": {
+      "Room 1": {
+         "LightBulb": {},
+         "Air conditioner 1": {}
+       },
+       "Room 2": {
+         "LightBulb 2": {},
+         "Air conditioner 2": {}
+       },
+       "Garden": {
+         "Irrigation": {}
+       },
+       "Pool": {
+         "Pump": {}
+       }
+    }
+}

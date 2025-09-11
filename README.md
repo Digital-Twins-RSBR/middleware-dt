@@ -241,16 +241,16 @@ Dispositivos de baixa prioridade: 120-300 segundos
 Dispositivos com bateria limitada: 300-600 segundos
 
 
-# Executando o Projeto com Docker Compose
+
 
 Como configurar e executar o projeto utilizando Docker Compose. 
 
-## Pré-requisitos
+
 
 - Docker instalado ([Instruções de instalação](https://docs.docker.com/get-docker/))
 - Docker Compose instalado ([Instruções de instalação](https://docs.docker.com/compose/install/))
 
-## Configuração
+
 
 ### 1. Criar o arquivo `.env`
 
@@ -260,24 +260,11 @@ Crie um arquivo `.env` na raiz do projeto para armazenar as variáveis de ambien
 touch .env
 ```
 
+
 ### 2. Adicionar variáveis de ambiente
 
-Adicione as seguintes variáveis no arquivo `.env`:
+Dentro da raiz do projeto existe um arquivo .env.example que irá ajudar no preenchimento das variaveis. Adicione as variáveis no arquivo `.env` com suas respectivas configurações.
 
-```env
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DB=nomebanco
-DATABASE_URL=postgres://postgres:postgres@db:5432/nomebanco
-NEO4J_AUTH=neo4j/password
-
-DEBUG=True
-ALLOWED_HOSTS=0.0.0.0,localhost,127.0.0.1
-```
-
-> **Nota:** Substitua os valores das variáveis conforme necessário para o seu ambiente.
-
-## Executando o projeto
 
 ### 1. Iniciar os containers
 
@@ -318,7 +305,7 @@ Para remover os containers criados, execute:
 docker compose down
 ```
 
-## Configurações adicionais
+
 
 ### Criar um usuário administrador
 
@@ -326,3 +313,117 @@ Após iniciar os containers, você pode criar um usuário administrador para o s
 
 ```bash
 docker compose exec middleware python manage.py createsuperuser
+
+
+# Executando o Projeto com Docker Compose
+
+O projeto pode ser facilmente executado com Docker Compose, incluindo todos os serviços necessários: PostgreSQL, Neo4j, Parser, InfluxDB e o Middleware Django (MidDiTS).
+
+## Pré-requisitos
+
+- Docker instalado ([Instruções de instalação](https://docs.docker.com/get-docker/))
+- Docker Compose instalado ([Instruções de instalação](https://docs.docker.com/compose/install/))
+
+## Configuração
+
+### 1. Crie um arquivo `.env`
+
+Copie o modelo:
+
+```bash
+cp .env.example .env
+```
+
+Edite o `.env` conforme necessário para o seu ambiente. O conteúdo mínimo recomendado:
+
+```env
+# PostgreSQL
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=middts
+DATABASE_URL=postgresql://postgres:postgres@db:5432/middts
+
+# Neo4j
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=password
+NEO4J_URL=neo4j:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=password
+
+# InfluxDB
+INFLUXDB_HOST=influxdb
+INFLUXDB_PORT=8086
+INFLUXDB_BUCKET=iot_data
+INFLUXDB_ORGANIZATION=middts
+INFLUXDB_TOKEN=admin_token_123
+
+# Middleware
+DEBUG=True
+ALLOWED_HOSTS=0.0.0.0,localhost,127.0.0.1
+```
+
+## Subindo os serviços
+
+```bash
+docker compose up --build -d
+```
+
+Isso irá subir:
+
+- PostgreSQL (`db`)
+- Neo4j (`neo4j`)
+- Parser API (`parser`)
+- InfluxDB (`influxdb`)
+- MidDiTS (Gunicorn + Django)
+- Nginx (como proxy reverso)
+
+## Acessando os serviços
+
+- MidDiTS API: http://localhost
+- InfluxDB UI: http://localhost:8086
+- Neo4j: http://localhost:7474
+- Parser: http://localhost:8080
+
+## Criando o superusuário
+
+```bash
+docker compose exec middleware python manage.py createsuperuser
+```
+
+## Healthcheck de dependências
+
+Após subir os serviços, execute o script:
+
+```bash
+./healthcheck_all.sh
+```
+
+Saída esperada:
+
+```
+PostgreSQL: OK
+Neo4j: OK
+InfluxDB: OK
+Parser API: OK
+✅ Verificação concluída.
+```
+
+## Finalizando
+
+Para parar:
+
+```bash
+docker compose down
+```
+
+🔗 Acessando os Serviços
+
+Após a inicialização dos containers, os serviços estarão disponíveis nas seguintes URLs:
+Serviço	URL	Observação
+MidDiTS API	http://localhost/api/docs	Interface REST da aplicação
+Admin Django	http://localhost/admin	Interface administrativa
+Nginx (proxy)	http://localhost	Redireciona para o middts
+Neo4j	http://localhost:7474	Interface gráfica do Neo4j
+InfluxDB	http://localhost:8086	Gerenciador de buckets e tokens
+Parser ThingsBoard	http://localhost:8080 / 8081	API auxiliar para parser DTDL
+PostgreSQL	localhost:5434	Conexão para ferramentas como DBeaver ou psql

@@ -33,13 +33,18 @@ from .models import (
     DTDLModel,
     ModelRelationship,
 )
-from ninja import Router
+
+from ninja import Router, Body
 from ninja.errors import HttpError
 
 from neomodel import db
 from typing import List
+from django.db import transaction
+from ninja import Schema
+from sentence_transformers import SentenceTransformer, util
 
 router = Router()
+
 
 @router.post(
     "/systems/",
@@ -553,6 +558,90 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
         raise HttpError(400, "Neo4j service is unavailable.")
     except Exception as e:
         raise HttpError(400, str(e))
+
+
+@router.post("/systems/{system_id}/instances/hierarchical/", tags=["Orchestrator"])
+def create_hierarchical_instances(request, system_id: int, data: dict = Body(...)):
+    """
+    Cria instâncias de Digital Twins a partir de um dicionário hierárquico.
+    Cada chave é o nome do twin, e os valores são filhos.
+    Exemplo de payload:
+    {
+        "House 1": {
+            "Room 1": {
+                "LightBulb 1": {},
+                "Air conditioner 1": {}
+            }
+        }
+    }
+    """
+
+
+    # Garante que o data é um dicionário (caso venha como JSON string)
+    if not isinstance(data, dict):
+        from django.http import JsonResponse
+        return JsonResponse({"detail": "Payload deve ser um dicionário JSON."}, status=422)
+
+    model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+    dtdl_models = list(DTDLModel.objects.filter(system_id=system_id))
+    model_names = [m.name for m in dtdl_models]
+    created_instances = []
+
+    def find_best_model(name):
+        if not dtdl_models:
+            return None, 0.0
+        embeddings = model.encode(model_names, convert_to_tensor=True)
+        query_emb = model.encode(name, convert_to_tensor=True)
+        scores = util.cos_sim(query_emb, embeddings)[0]
+        best_idx = int(scores.argmax())
+        best_score = float(scores[best_idx])
+        if best_score > 0.60:
+            return dtdl_models[best_idx], best_score
+        return None, best_score
+
+    def recursive_create(tree, parent_instance=None):
+        if not isinstance(tree, dict):
+            return
+        for twin_name, children in tree.items():
+            best_model, score = find_best_model(twin_name)
+            if not best_model:
+                print(f"[MIDDTS] Nenhum modelo DTDL sugerido para '{twin_name}' (score={score:.2f})")
+                continue
+            dt_instance = DigitalTwinInstance.objects.create(model=best_model, name=twin_name)
+            created_instances.append(dt_instance)
+            if parent_instance:
+                # Buscar relacionamento permitido entre os modelos
+                # Corrigido: target pode ser apenas o prefixo do dtdl_id (ex: target='dtmi:housegen:Room', dtdl_id='dtmi:housegen:Room;1')
+                rel = ModelRelationship.objects.filter(
+                    dtdl_model=parent_instance.model,
+                    target__in=[
+                        best_model.dtdl_id,
+                        best_model.dtdl_id.split(';')[0]
+                    ]
+                ).first()
+                # Se não achou, tenta por prefixo (startswith)
+                if not rel:
+                    rel = ModelRelationship.objects.filter(
+                        dtdl_model=parent_instance.model,
+                        target__startswith=best_model.dtdl_id.split(';')[0]
+                    ).first()
+                if rel:
+                    DigitalTwinInstanceRelationship.objects.create(
+                        source_instance=parent_instance,
+                        target_instance=dt_instance,
+                        relationship=rel
+                    )
+                else:
+                    print(f"[MIDDTS] Aviso: Sem relacionamento entre '{parent_instance.model.name}' e '{best_model.name}' (target esperado: '{best_model.dtdl_id.split(';')[0]}')")
+            # Recursão para filhos
+            if isinstance(children, dict) and children:
+                recursive_create(children, dt_instance)
+            DigitalTwinInstanceProperty.associate_all_for_instance(dt_instance)
+
+    recursive_create(data)
+    # Retorna lista de dicts com id e nome para facilitar debug/consumo
+    return [{"id": inst.id, "name": inst.name, "model": inst.model.name} for inst in created_instances]
+
 
 # Exemplos de queries Cypher para o Neo4j:
 # Listar todos os Digital Twins:

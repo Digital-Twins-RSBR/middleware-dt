@@ -2,12 +2,18 @@ import asyncio
 import json
 import requests
 import time
+import logging
 from asgiref.sync import sync_to_async
 import websockets
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from facade.models import Property
 from orchestrator.models import DigitalTwinInstance, DigitalTwinInstanceProperty
+from datetime import datetime
+
+# Configuração básica de logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 THINGSBOARD_WS_URL_TEMPLATE = "ws://{thingsboard_server}/api/ws/plugins/telemetry?token={your_jwt_token}"
 INFLUXDB_URL = f"http://{settings.INFLUXDB_HOST}:{settings.INFLUXDB_PORT}/api/v2/write?org={settings.INFLUXDB_ORGANIZATION}&bucket={settings.INFLUXDB_BUCKET}&precision=ms"
@@ -68,16 +74,16 @@ class Command(BaseCommand):
                 if device_id not in active_device_ids:
                     self.active_tasks[device_id].cancel()
                     del self.active_tasks[device_id]
-                    print(f"Stopped listening for device {device_id}")
+                    logger.info(f"Stopped listening for device {device_id}")
 
             await asyncio.sleep(30)  # Verificar novos dispositivos a cada 10 minutos
 
     async def listen_to_device(self, ws_url, device):
         while True:
             try:
-                print(ws_url)
+                logger.info(ws_url)
                 async with websockets.connect(ws_url, timeout=10) as websocket:
-                    print(f"Connected to ThingsBoard WebSocket for device {device.name}")
+                    logger.info(f"Connected to ThingsBoard WebSocket for device {device.name}")
                     
                     # Subscribe to updates for the device
                     subscribe_message = {
@@ -100,8 +106,8 @@ class Command(BaseCommand):
                         await self.process_message(device, data)
 
             except (websockets.exceptions.ConnectionClosed, asyncio.TimeoutError) as e:
-                print(f"Connection error for device {device.name}: {e}")
-                print("Reconnecting in 10 seconds...")
+                logger.error(f"Connection error for device {device.name}: {e}")
+                logger.info("Reconnecting in 10 seconds...")
                 await asyncio.sleep(10)  # Wait before reconnecting
 
     async def check_device_status(self, device):
@@ -122,28 +128,85 @@ class Command(BaseCommand):
                         return attr.get('value', False)
             return False
         except Exception as e:
-            print(f"Error checking device status: {e}")
+            logger.exception(f"Error checking device status: {e}")
             return False
 
     async def update_dt_instance_status(self, device, is_active):
-        """Atualiza o status do DigitalTwinInstance"""
+        """Atualiza o status do DigitalTwinInstance e registra mudanças no InfluxDB"""
         dt_instances = await sync_to_async(list)(
             DigitalTwinInstance.objects.filter(
                 digitaltwininstanceproperty__device_property__device=device
             ).distinct()
         )
+        
         for dt_instance in dt_instances:
-            dt_instance.active = is_active
-            await sync_to_async(dt_instance.save)()
-            print(f"Updated DT Instance {dt_instance.id} status to {is_active}")
+            current_state = await sync_to_async(lambda: dt_instance.active)()
+            if current_state != is_active:
+                current_timestamp = int(time.time() * 1000)  # Horário atual em milissegundos
+                
+                # Obtém o timestamp da última verificação
+                last_check_timestamp = await sync_to_async(lambda: int(dt_instance.last_status_check.timestamp() * 1000))()
+                
+                # Calcula a duração da inatividade
+                inactivity_duration = 0
+                if not is_active:
+                    # Se está ficando inativo agora, marca o início da inatividade
+                    inactivity_duration = 0  # Não há inatividade ainda
+                else:
+                    # Se está voltando a ficar ativo, calcula o tempo que ficou inativo
+                    inactivity_duration = current_timestamp - last_check_timestamp
+                
+                # Atualiza o estado no Django
+                dt_instance.active = is_active
+                dt_instance.last_status_check = datetime.fromtimestamp(current_timestamp / 1000)  # Salva em segundos
+                await sync_to_async(dt_instance.save)()
+                logger.info(f"Updated DT Instance {dt_instance.id} status to {'active' if is_active else 'inactive'}")
+                
+                # Envia os dados para o InfluxDB
+                if self.use_influxdb and inactivity_duration > 0:
+                    logger.info(f"Writing availability event to InfluxDB for device {device.identifier}")
+                    try:
+                        device_type_name = await sync_to_async(lambda: device.type.name if device.type else 'unknown')()
+                        
+                        tags = [
+                            f"device={device.identifier}",
+                            f"dt_instance={dt_instance.id}",
+                            f"device_type={device_type_name}"
+                        ]
+                        
+                        fields = [
+                            f"active={1 if is_active else 0}i",
+                            f"inactivity_duration={inactivity_duration}i"
+                        ]
+                        
+                        measurement = f"device_availability,{','.join(tags)} {','.join(fields)} {current_timestamp}"
+                        
+                        response = await sync_to_async(requests.post)(
+                            INFLUXDB_URL, 
+                            headers=headers, 
+                            data=measurement
+                        )
+                        
+                        if response.status_code != 204:
+                            logger.error(f"Failed to write availability event: {response.text}")
+                            logger.error(f"Attempted measurement: {measurement}")
+                        else:
+                            logger.info(f"Device {device.identifier} {'activated' if is_active else 'deactivated'} " + 
+                                        f"after {inactivity_duration / 1000:.2f} seconds of {'inactivity' if is_active else 'activity'}")
+                        
+                    except Exception as e:
+                        logger.exception(f"Error writing availability to InfluxDB: {str(e)}")
 
     async def process_message(self, device, data):
+        """Processa mensagens recebidas do ThingsBoard"""
+        logger.info(f"Processing message for device {device.name}")
+        
         # Verifica o status do dispositivo primeiro
         device_active = await self.check_device_status(device)
         await self.update_dt_instance_status(device, device_active)
 
         if not device_active:
-            print(f"Device {device.name} is inactive, skipping telemetry update")
+            logger.warning(f"Device {device.name} is inactive, skipping telemetry update")
             return
 
         latest_values = data.get('data')
@@ -168,22 +231,23 @@ class Command(BaseCommand):
                             property_value = int(property.get_value())
                         else:
                             property_value = property.get_value()
-                        # Modificado para enviar apenas received_timestamp quando recebe dados do ThingsBoard
+                        
+                        # Envia apenas o received_timestamp para o InfluxDB
                         data = f"device_data,sensor={device.identifier},source=middts {key}={property_value},received_timestamp={timestamp} {timestamp}"
                         response = requests.post(INFLUXDB_URL, headers=headers, data=data)
-                        print(f"Response Code: {response.status_code}, Response Text: {response.text}")
-                        # await sync_to_async(requests.post)(INFLUXDB_URL, headers=headers, data=data)
-                        print(f"Updated property for {device.name} - {key}: {valor} and sent to InfluxDB with received_timestamp")
+                        logger.info(f"Response Code: {response.status_code}, Response Text: {response.text}")
+                        logger.info(f"Updated property for {device.name} - {key}: {valor} and sent to InfluxDB with received_timestamp")
 
                 except Exception as e:
-                    print(f"Error processing property {key} for device {device.name}: {e}")
+                    logger.exception(f"Error processing property {key} for device {device.name}: {e}")
 
     def handle(self, *args, **options):
         self.use_influxdb = USE_INFLUX_TO_EVALUATE  # Atualiza o parâmetro com o valor passado
         loop = asyncio.get_event_loop()
         try:
+            logger.info("Starting WebSocket listener...")
             loop.run_until_complete(self.listen())
         except KeyboardInterrupt:
-            print("Stopping WebSocket listener...")
+            logger.info("Stopping WebSocket listener...")
             for task in self.active_tasks.values():
                 task.cancel()

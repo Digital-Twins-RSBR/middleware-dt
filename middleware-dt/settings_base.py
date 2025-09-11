@@ -5,9 +5,11 @@ from neomodel import config
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-SECRET_KEY = ''
-DEBUG = True
-ALLOWED_HOSTS = []
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+
+DEBUG = os.getenv("DEBUG", "True").lower() in ("1", "true", "yes", "on")
+ALLOWED_HOSTS = [h for h in os.getenv("ALLOWED_HOSTS", "*").split(",") if h]
+CSRF_TRUSTED_ORIGINS = [o for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o]
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -38,7 +40,7 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
 ]
 
-ROOT_URLCONF = 'middleware-dt.urls'
+ROOT_URLCONF = 'middleware_dt.urls'
 
 
 TEMPLATES = [
@@ -57,16 +59,16 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'middleware-dt.wsgi.application'
+WSGI_APPLICATION = 'middleware_dt.wsgi.application'
 
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'yourdatabase',
-        'USER': 'user',
-        'PASSWORD': 'password',
-        'HOST': 'localhost',
-        'PORT': '5432',
+        'NAME': os.getenv('POSTGRES_DB', 'middts'),
+        'USER': os.getenv('POSTGRES_USER', 'postgres'),
+        'PASSWORD': os.getenv('POSTGRES_PASSWORD', 'tb'),
+        'HOST': os.getenv('POSTGRES_HOST', '10.10.2.10'),
+        'PORT': os.getenv('POSTGRES_PORT', '5432'),
     }
 }
 
@@ -112,8 +114,6 @@ STATIC_ROOT = BASE_DIR + "/" + "static/"
 NEO4J_URL = os.getenv("NEO4J_URL", "bolt://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
-
-# Define a conexão com Neo4j
 config.DATABASE_URL = f"bolt://{NEO4J_USER}:{NEO4J_PASSWORD}@{NEO4J_URL}"
 
 SESSION_COOKIE_NAME = 'sessionid_middts'
@@ -122,19 +122,21 @@ CSRF_COOKIE_NAME = 'csrftoken_middts'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'nomebanco',
-        'USER': 'postgres',
-        'PASSWORD': 'postgres',
-        'HOST': 'middleware-dt-db-1',
-        'PORT': '5432',
+        'NAME': os.getenv("POSTGRES_DB", "middts"),
+        'USER': os.getenv("POSTGRES_USER", "postgres"),
+        'PASSWORD': os.getenv("POSTGRES_PASSWORD", "postgres"),
+        'HOST': os.getenv("POSTGRES_HOST", "middleware-dt-db-1'"),
+        'PORT': os.getenv("POSTGRES_PORT", "5432"),
     }
 }
 
-INFLUXDB_HOST = 'localhost'
-INFLUXDB_PORT = 8086
-INFLUXDB_BUCKET = 'iot_data'
-INFLUXDB_ORGANIZATION = 'middts'
-INFLUXDB_TOKEN = 'xxx'
+# InfluxDB Configuration
+#INFLUXDB_HOST = os.getenv("INFLUXDB_HOST", "localhost")
+INFLUXDB_HOST = os.getenv("INFLUXDB_HOST", "influxdb")
+INFLUXDB_PORT = int(os.getenv("INFLUXDB_PORT", 8086))
+INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "iot_data")
+INFLUXDB_ORGANIZATION = os.getenv("INFLUXDB_ORGANIZATION", "middts")
+INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN", "xxx")
 USE_INFLUX_TO_EVALUATE = True
 
 # Digital Twin Settings

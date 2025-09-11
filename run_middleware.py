@@ -3,7 +3,7 @@ import subprocess
 import sys
 
 def main():
-    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "middleware-dt.settings")
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "middleware_dt.settings")
     
     # Inicia o listener do gateway
     listener_process = subprocess.Popen([sys.executable, "manage.py", "listen_gateway"])
