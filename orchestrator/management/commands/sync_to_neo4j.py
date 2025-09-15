@@ -2,6 +2,9 @@ from django.core.management.base import BaseCommand
 from orchestrator.models import DigitalTwinInstance, SystemContext as DjangoSystemContext
 from orchestrator.neo4jmodels import DigitalTwin, TwinProperty, SystemContext as Neo4jSystemContext
 from neomodel import db
+from neomodel import config as neomodel_config
+import socket
+import traceback
 
 class Command(BaseCommand):
     help = "Synchronize Digital Twins and their properties from PostgreSQL to Neo4j"
@@ -11,9 +14,30 @@ class Command(BaseCommand):
 
         # Apaga todos os nós e relacionamentos do Neo4j
         self.stdout.write("Clearing all nodes and relationships from Neo4j...")
-        with db.transaction:
-            db.cypher_query("MATCH (n) DETACH DELETE n")
-            self.stdout.write(self.style.WARNING("All nodes and relationships have been deleted."))
+        try:
+            with db.transaction:
+                db.cypher_query("MATCH (n) DETACH DELETE n")
+                self.stdout.write(self.style.WARNING("All nodes and relationships have been deleted."))
+        except Exception as e:
+            # Ajuda de diagnóstico quando o host/porta não resolvem
+            self.stderr.write(self.style.ERROR("Failed to connect to Neo4j."))
+            try:
+                self.stderr.write(f"neomodel.DATABASE_URL = {neomodel_config.DATABASE_URL}")
+            except Exception:
+                pass
+            # tenta extrair host/port da URL para dar dica
+            try:
+                # ex: bolt://user:pass@host:7687
+                parts = neomodel_config.DATABASE_URL.split('@')[-1]
+                hostport = parts.split('//')[-1]
+                self.stderr.write(self.style.ERROR(f"Resolved host/port segment: {hostport}"))
+            except Exception:
+                pass
+            self.stderr.write(self.style.ERROR(str(e)))
+            self.stderr.write(self.style.ERROR("Check NEO4J_URL/NEO4J_USER/NEO4J_PASSWORD environment variables and that Neo4j is reachable from this container/host."))
+            # print stack for more context
+            traceback.print_exc()
+            return
         # Sincroniza Digital Twins e Propriedades
         with db.transaction:
             for system_context in DjangoSystemContext.objects.filter(pk=2):

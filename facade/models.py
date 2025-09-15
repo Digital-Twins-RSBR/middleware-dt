@@ -2,6 +2,7 @@
 
 # gateway/models.py
 import time
+import os
 from decimal import Decimal
 import requests
 from django.conf import settings
@@ -231,7 +232,7 @@ class Property(models.Model):
         if self.id:
             old_value = Property.objects.get(id=self.id).value
         success = False
-        if self.rpc_write_method or self.rpc_write_method:
+        if self.rpc_write_method:
             response = self.call_rpc(RPCCallTypes.WRITE)
             success = response.status_code == 200
         

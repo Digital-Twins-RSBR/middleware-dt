@@ -111,10 +111,32 @@ STATIC_ROOT = BASE_DIR + "/" + "static/"
 
 #### Configuração do NEO4J
 
-NEO4J_URL = os.getenv("NEO4J_URL", "bolt://localhost:7687")
+NEO4J_URL = os.getenv("NEO4J_URL", "localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
-config.DATABASE_URL = f"bolt://{NEO4J_USER}:{NEO4J_PASSWORD}@{NEO4J_URL}"
+
+# Build neomodel DATABASE_URL robustly. Accept NEO4J_URL in forms:
+#   - host:port
+#   - bolt://host:port
+#   - neo4j://host:port
+#   - bolt://user:pass@host:port
+from urllib.parse import urlsplit
+
+_raw_neo = NEO4J_URL
+_parsed = urlsplit(_raw_neo)
+if _parsed.scheme:
+    # NEO4J_URL already contains a scheme. If it already contains credentials,
+    # keep them, otherwise inject NEO4J_USER/NEO4J_PASSWORD.
+    scheme = _parsed.scheme
+    netloc = _parsed.netloc
+    path = _parsed.path or ''
+    if '@' in netloc:
+        config.DATABASE_URL = f"{scheme}://{netloc}{path}"
+    else:
+        config.DATABASE_URL = f"{scheme}://{NEO4J_USER}:{NEO4J_PASSWORD}@{netloc}{path}"
+else:
+    # NEO4J_URL has no scheme, assume bolt
+    config.DATABASE_URL = f"bolt://{NEO4J_USER}:{NEO4J_PASSWORD}@{_raw_neo}"
 
 SESSION_COOKIE_NAME = 'sessionid_middts'
 CSRF_COOKIE_NAME = 'csrftoken_middts'
@@ -141,3 +163,6 @@ USE_INFLUX_TO_EVALUATE = True
 
 # Digital Twin Settings
 DEFAULT_INACTIVITY_TIMEOUT = 60
+# Controla integração com Neo4j. Por padrão desabilitado para evitar tentativas
+# de conexão em ambientes que não têm Neo4j disponível.
+USE_NEO4J = os.getenv('USE_NEO4J', 'False').lower() in ('1', 'true', 'yes', 'on')
