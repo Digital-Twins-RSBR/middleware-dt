@@ -172,4 +172,16 @@ else
 fi
 
 echo "Iniciando Gunicorn..."
+# Start ThingsBoard WebSocket listener (listen_gateway) in background and persist logs
+# Create logs dir if missing
+mkdir -p /middleware-dt/logs
+LISTENER_LOG="/middleware-dt/logs/listen_gateway.log"
+echo "[entrypoint] Starting listen_gateway in background (logs -> $LISTENER_LOG)"
+# Use nohup to keep it running in background; redirect stdout/stderr to log
+nohup python manage.py listen_gateway >> "$LISTENER_LOG" 2>&1 &
+LISTENER_PID=$!
+
+# Ensure the listener is killed when the container exits
+trap 'echo "[entrypoint] Stopping background listener (pid $LISTENER_PID)"; kill ${LISTENER_PID} 2>/dev/null || true' EXIT INT TERM
+
 exec gunicorn --bind 0.0.0.0:8000 --workers 3 middleware_dt.wsgi:application
