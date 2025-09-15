@@ -18,7 +18,7 @@ will create missing ones and link properties where exact matches are found.
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from facade.models import Device, Property
-from orchestrator.models import SystemContext, DTDLModel, DigitalTwinInstance, ModelElement, DigitalTwinInstanceProperty, DigitalTwinInstanceRelationship
+from orchestrator.models import SystemContext, DTDLModel, DigitalTwinInstance, ModelElement, DigitalTwinInstanceProperty, DigitalTwinInstanceRelationship, ModelRelationship
 from orchestrator.utils import normalize_name
 import re
 
@@ -45,16 +45,21 @@ def find_or_create_hierarchy(root_tokens: list[str], system: SystemContext | Non
     Ex: ['house 1', 'room 2', 'light 3'] cria/retorna instância para 'light 3'.
     """
     parent = None
+    prev_parent = None
     created_instances = []
     for idx, token in enumerate(root_tokens):
         name = token
         # tenta encontrar instância existente com mesmo nome
-        existing = DigitalTwinInstance.objects.filter(name=name).first()
+        # prefer match within same system if possible
+        if system:
+            existing = DigitalTwinInstance.objects.filter(name=name, model__system=system).first()
+        else:
+            existing = DigitalTwinInstance.objects.filter(name=name).first()
         if existing:
             parent = existing
             continue
         # tenta associar a um modelo baseado no token
-        model = DTDLModel.objects.filter(name__icontains=token.split()[0]).first()
+        model = DTDLModel.objects.filter(name__icontains=token.split()[0], system=system).first() if system else DTDLModel.objects.filter(name__icontains=token.split()[0]).first()
         if not model:
             # se não achar, pega qualquer modelo do sistema
             model = DTDLModel.objects.filter(system=system).first() if system else DTDLModel.objects.first()
@@ -65,9 +70,22 @@ def find_or_create_hierarchy(root_tokens: list[str], system: SystemContext | Non
             inst = DigitalTwinInstance.objects.create(model=model, name=name)
             created_instances.append((name, model.name if model else None))
             parent = inst
-            # cria relação com parent anterior
-            if idx > 0 and parent and prev_parent:
-                DigitalTwinInstanceRelationship.objects.update_or_create(source_instance=prev_parent, target_instance=parent, relationship=None)
+            # cria relação com parent anterior: tenta encontrar ModelRelationship entre os modelos
+            if idx > 0 and prev_parent:
+                try:
+                    # busca relacionamento definido no modelo do parent cujo target casa com o dtdl_id do model
+                    rel = prev_parent.model.model_relationships.filter(target__icontains=(model.dtdl_id or model.name)).first()
+                    if not rel:
+                        # fallback: buscar por nome
+                        rel = prev_parent.model.model_relationships.filter(name__icontains=model.name.split()[0]).first()
+                    if rel:
+                        DigitalTwinInstanceRelationship.objects.update_or_create(source_instance=prev_parent, target_instance=parent, relationship=rel)
+                    else:
+                        # Não criar DigitalTwinInstanceRelationship vazio — apenas logar
+                        print(f"[WARN] No ModelRelationship found between {prev_parent.model.name} -> {model.name}; skipping instance relationship creation.")
+                except Exception as e:
+                    print(f"[ERROR] Failed creating relationship between instances {prev_parent} -> {parent}: {e}")
+                    # continua sem criar a relationship
         prev_parent = parent
     return parent, created_instances
 
