@@ -8,6 +8,7 @@ import websockets
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from facade.models import Property
+from facade.utils import format_influx_line
 from orchestrator.models import DigitalTwinInstance, DigitalTwinInstanceProperty
 from datetime import datetime
 
@@ -232,8 +233,11 @@ class Command(BaseCommand):
                         else:
                             property_value = property.get_value()
                         
-                        # Envia apenas o received_timestamp para o InfluxDB
-                        data = f"device_data,sensor={device.identifier},source=middts {key}={property_value},received_timestamp={timestamp} {timestamp}"
+                        # Envia apenas o received_timestamp para o InfluxDB using safe formatter
+                        tags = {"sensor": device.identifier, "source": "middts"}
+                        # Ensure numeric types for booleans/ints
+                        fields = {key: property_value, "received_timestamp": timestamp}
+                        data = format_influx_line("device_data", tags, fields, timestamp=timestamp)
                         response = requests.post(INFLUXDB_URL, headers=headers, data=data)
                         logger.info(f"Response Code: {response.status_code}, Response Text: {response.text}")
                         logger.info(f"Updated property for {device.name} - {key}: {valor} and sent to InfluxDB with received_timestamp")

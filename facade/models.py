@@ -9,6 +9,7 @@ from django.conf import settings
 from django.db import models
 from django.contrib.auth.models import User
 from enum import Enum
+from facade.utils import format_influx_line
 
 from core.models import GatewayIOT
 # INFLUX configuration
@@ -223,7 +224,9 @@ class Property(models.Model):
         valor = self.get_value()
         if self.type == 'Boolean':
             valor = int(valor)
-        data = f"device_data,sensor={self.device.identifier},source=middts {self.name}={valor},sent_timestamp={timestamp} {timestamp}"
+        tags = {"sensor": self.device.identifier, "source": "middts"}
+        fields = {self.name: valor, "sent_timestamp": timestamp}
+        data = format_influx_line("device_data", tags, fields, timestamp=timestamp)
         response = requests.post(INFLUXDB_URL, headers=headers, data=data)
         print(f"Response Code: {response.status_code}, Response Text: {response.text}")
     
@@ -318,10 +321,12 @@ def write_inactivity_event(device, inactivity_type: InactivityType, error_messag
         escaped_message = error_message.replace('"', '\\"')
         fields.append(f'error_message="{escaped_message}"')
     
-    # Construct measurement in proper InfluxDB line protocol format:
-    # <measurement>,<tags> <fields> <timestamp>
-    measurement = f"device_inactivity,{','.join(tags)} {','.join(fields)} {timestamp}"
-    
+    # Construct measurement in proper InfluxDB line protocol format using helper
+    tags_dict = {"device": device.identifier, "type": inactivity_type.value}
+    fields_dict = {"inactivity_timeout": timeout, "status": 1}
+    if error_message:
+        fields_dict["error_message"] = error_message
+    measurement = format_influx_line("device_inactivity", tags_dict, fields_dict, timestamp=timestamp)
     try:
         response = requests.post(INFLUXDB_URL, headers=headers, data=measurement)
         if response.status_code != 204:
