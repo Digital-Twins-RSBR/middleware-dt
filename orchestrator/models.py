@@ -339,15 +339,16 @@ class DigitalTwinInstanceProperty(models.Model):
             print(f"[MIDDTS] Associação automática: '{self.property.name}' (DT: {dt_text}) → '{best_match.name}' (Device: {best_device_text}) (score: {best_score:.2f})")
 
     def save(self, *args, **kwargs):
-        called_binding = False
+        # called_binding = False
         if not self.device_property:
             if self.property.isCausal():
-                self.suggest_device_binding()
-                called_binding = True
+                # self.suggest_device_binding()
+                # called_binding = True
         old_value = DigitalTwinInstanceProperty.objects.get(pk=self.id).value if self.id else ''
         super().save(*args, **kwargs)
         # Se a associação automática foi feita, garantir persistência
-        if called_binding and self.device_property:
+        # if called_binding and self.device_property:
+        if self.device_property:
             # Salva novamente para garantir que o device_property seja persistido
             super().save(update_fields=["device_property"])
         if self.id and self.device_property and self.property.isCausal():
