@@ -5,7 +5,7 @@ from orchestrator.neo4jmodels import DigitalTwin, TwinProperty, SystemContext as
 from neomodel import db
 from django.conf import settings
 
-USE_NEO4J = getattr(settings, 'USE_NEO4J', False):
+USE_NEO4J = getattr(settings, 'USE_NEO4J', False)
 
 ### CREATE/UPDATE SIGNAL ###
 @receiver(post_save, sender=DigitalTwinInstanceProperty)
