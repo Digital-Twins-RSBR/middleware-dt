@@ -3,6 +3,7 @@ import json
 import requests
 import time
 import logging
+from collections import defaultdict
 from asgiref.sync import sync_to_async
 import websockets
 from django.conf import settings
@@ -11,6 +12,7 @@ from facade.models import Property
 from facade.utils import format_influx_line
 from orchestrator.models import DigitalTwinInstance, DigitalTwinInstanceProperty
 from datetime import datetime
+from urllib.parse import urlparse
 
 # Configuração básica de logging
 logging.basicConfig(level=logging.INFO)
@@ -32,6 +34,9 @@ class Command(BaseCommand):
     def __init__(self):
         super().__init__()
         self.active_tasks = {}  # Armazena tarefas ativas por device_id
+        # Failure counters and last-log timestamps to throttle noisy errors
+        self.failure_counts = defaultdict(int)
+        self.last_log_at = defaultdict(lambda: 0.0)
 
     async def get_jwt_token(self, device):
         gateway = device.gateway
@@ -43,16 +48,57 @@ class Command(BaseCommand):
         headers = {
             "Content-Type": "application/json"
         }
-        response = await sync_to_async(requests.post)(url, headers=headers, data=json.dumps(payload))
-        response.raise_for_status()  # Raise an exception for HTTP errors
-        return response.json().get("token")
+        try:
+            response = await sync_to_async(requests.post)(url, headers=headers, data=json.dumps(payload), timeout=5)
+            # If login failed, log status and body to help debugging
+            if response.status_code != 200:
+                body = None
+                try:
+                    body = response.json()
+                except Exception:
+                    body = response.text
+                logger.warning(f"Failed to authenticate to {url}: status={response.status_code}, body={body}")
+                raise Exception(f"Auth failed: {response.status_code}")
+
+            # reset failure counter on success
+            self.failure_counts[device.id] = 0
+            token = None
+            try:
+                token = response.json().get("token")
+            except Exception:
+                token = None
+
+            if not token:
+                logger.warning(f"Auth response from {url} did not provide a token: {response.text}")
+                raise Exception("Empty token returned from auth endpoint")
+
+            return token
+        except Exception as e:
+            # exponential backoff: cap at 60s
+            self.failure_counts[device.id] += 1
+            retries = self.failure_counts[device.id]
+            delay = min(60, 2 ** min(retries, 6))
+            now = time.time()
+            # throttle logging to once every 60s per device (avoid huge logs)
+            if now - self.last_log_at[device.id] > 60:
+                logger.warning(f"Failed to get JWT token for device {getattr(device, 'name', device.id)}: {str(e)}; will retry in {delay}s")
+                self.last_log_at[device.id] = now
+            # sleep here to slow down retry attempts
+            await asyncio.sleep(delay)
+            return None
 
     async def get_ws_url(self, device):
+        # Obtain a valid JWT token first; if we couldn't get one, return None so
+        # the caller skips creating a ws task for this device for now.
         jwt_token = await self.get_jwt_token(device)
-        return THINGSBOARD_WS_URL_TEMPLATE.format(
-            thingsboard_server=device.gateway.url,
-            your_jwt_token=jwt_token
-        ).replace('http://', '')
+        if not jwt_token:
+            return None
+
+        # Parse gateway URL and construct websocket URL properly (supports http/https)
+        parsed = urlparse(device.gateway.url)
+        netloc = parsed.netloc or parsed.path  # handle urls without scheme
+        scheme = 'wss' if parsed.scheme == 'https' else 'ws'
+        return f"{scheme}://{netloc}/api/ws/plugins/telemetry?token={jwt_token}"
 
     async def listen(self):
         while True:
@@ -62,11 +108,12 @@ class Command(BaseCommand):
             
             # Iniciar ou atualizar tasks para novos dispositivos
             for dtinstanceproperty in dtinstanceproperties:
-                device_id = dtinstanceproperty.device_property.device.id
+                device = dtinstanceproperty.device_property.device
+                device_id = device.id
                 if device_id not in self.active_tasks:
-                    ws_url = await self.get_ws_url(dtinstanceproperty.device_property.device)
+                    # Create a per-device task that will obtain/refresh JWTs as needed
                     self.active_tasks[device_id] = asyncio.create_task(
-                        self.listen_to_device(ws_url, dtinstanceproperty.device_property.device)
+                        self.listen_to_device(device)
                     )
             
             # Remover tasks de dispositivos que não existem mais no banco
@@ -79,10 +126,17 @@ class Command(BaseCommand):
 
             await asyncio.sleep(30)  # Verificar novos dispositivos a cada 10 minutos
 
-    async def listen_to_device(self, ws_url, device):
+    async def listen_to_device(self, device):
         while True:
             try:
-                logger.info(ws_url)
+                # Obtain a fresh WS URL (with valid JWT) before each connection attempt
+                ws_url = await self.get_ws_url(device)
+                if not ws_url:
+                    # Failed to get JWT (backoff already applied inside get_jwt_token)
+                    await asyncio.sleep(5)
+                    continue
+
+                logger.debug(f"Attempting WebSocket connection to {ws_url} for device {device.name}")
                 async with websockets.connect(ws_url, timeout=10) as websocket:
                     logger.info(f"Connected to ThingsBoard WebSocket for device {device.name}")
                     
@@ -106,10 +160,25 @@ class Command(BaseCommand):
                         data = json.loads(message)
                         await self.process_message(device, data)
 
-            except (websockets.exceptions.ConnectionClosed, asyncio.TimeoutError) as e:
-                logger.error(f"Connection error for device {device.name}: {e}")
-                logger.info("Reconnecting in 10 seconds...")
-                await asyncio.sleep(10)  # Wait before reconnecting
+            except (websockets.exceptions.ConnectionClosed, asyncio.TimeoutError, OSError) as e:
+                # Throttle repeated connection error logs per device
+                now = time.time()
+                self.failure_counts[device.id] += 1
+                retries = self.failure_counts[device.id]
+                delay = min(60, 2 ** min(retries, 6))
+                # If server returned a websocket close with code 1011 and message indicating
+                # an invalid JWT, try to refresh token on the next loop iteration rather
+                # than reconnecting immediately with the same (invalid) token.
+                msg = str(e)
+                if isinstance(e, websockets.exceptions.ConnectionClosed) and getattr(e, 'code', None) == 1011 and 'Invalid JWT' in msg:
+                    logger.warning(f"Invalid JWT for device {device.name}; will refresh token and retry in {delay}s")
+                else:
+                    if now - self.last_log_at[device.id] > 60:
+                        logger.warning(f"Connection error for device {device.name}: {str(e)}; reconnecting in {delay}s")
+                        self.last_log_at[device.id] = now
+
+                await asyncio.sleep(delay)
+                continue
 
     async def check_device_status(self, device):
         """Verifica o status do dispositivo no ThingsBoard"""
@@ -129,7 +198,11 @@ class Command(BaseCommand):
                         return attr.get('value', False)
             return False
         except Exception as e:
-            logger.exception(f"Error checking device status: {e}")
+            # Avoid noisy exception trace for transient errors; log once per minute
+            now = time.time()
+            if now - self.last_log_at[getattr(device, 'id', 'global')] > 60:
+                logger.warning(f"Error checking device status for {getattr(device, 'name', device)}: {e}")
+                self.last_log_at[getattr(device, 'id', 'global')] = now
             return False
 
     async def update_dt_instance_status(self, device, is_active):
@@ -234,7 +307,10 @@ class Command(BaseCommand):
                             property_value = property.get_value()
                         
                         # Envia apenas o received_timestamp para o InfluxDB using safe formatter
-                        tags = {"sensor": device.identifier, "source": "middts"}
+                        # Prefer ThingsBoard internal id (thingsboard_id) when available to avoid
+                        # conflicts with friendly names. Fall back to device.identifier.
+                        sensor_id = device.identifier
+                        tags = {"sensor": sensor_id, "source": "middts"}
                         # Ensure numeric types for booleans/ints
                         fields = {key: property_value, "received_timestamp": timestamp}
                         data = format_influx_line("device_data", tags, fields, timestamp=timestamp)

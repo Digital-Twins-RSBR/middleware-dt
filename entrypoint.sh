@@ -176,6 +176,40 @@ echo "Iniciando Gunicorn..."
 # Create logs dir if missing
 mkdir -p /middleware-dt/logs
 LISTENER_LOG="/middleware-dt/logs/listen_gateway.log"
+# Optionally wait for ThingsBoard HTTP endpoint before starting the listener.
+# This avoids noisy ConnectionRefused errors while ThingsBoard is still booting.
+# Configure via environment variables:
+#   START_LISTENER_AFTER_TB=1 (default) -> wait for TB
+#   START_LISTENER_TIMEOUT=300 (seconds total to wait before giving up)
+#   TB_HOST / THINGSBOARD_HOST (host to check) and TB_PORT (default 8080)
+
+START_LISTENER_AFTER_TB="${START_LISTENER_AFTER_TB:-1}"
+START_LISTENER_TIMEOUT="${START_LISTENER_TIMEOUT:-300}"
+TB_HOST="${TB_HOST:-${THINGSBOARD_HOST:-10.0.0.11}}"
+TB_PORT="${TB_PORT:-8080}"
+
+if [ "$START_LISTENER_AFTER_TB" = "1" ]; then
+	echo "[entrypoint] Waiting up to ${START_LISTENER_TIMEOUT}s for ThingsBoard at ${TB_HOST}:${TB_PORT} before starting listen_gateway"
+	elapsed=0
+	backoff=1
+	while [ $elapsed -lt $START_LISTENER_TIMEOUT ]; do
+		code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://${TB_HOST}:${TB_PORT}/api/auth/login" || echo 000)
+		if [ "$code" != "000" ]; then
+			echo "[entrypoint] ThingsBoard HTTP responded with ${code} (ready). Starting listen_gateway."
+			break
+		fi
+		sleep $backoff
+		elapsed=$((elapsed + backoff))
+		backoff=$((backoff * 2))
+		if [ $backoff -gt 60 ]; then backoff=60; fi
+	done
+	if [ $elapsed -ge $START_LISTENER_TIMEOUT ]; then
+		echo "[entrypoint][WARN] Timed out waiting for ThingsBoard after ${START_LISTENER_TIMEOUT}s; starting listen_gateway anyway"
+	fi
+else
+	echo "[entrypoint] START_LISTENER_AFTER_TB!=1 -> starting listen_gateway immediately"
+fi
+
 echo "[entrypoint] Starting listen_gateway in background (logs -> $LISTENER_LOG)"
 # Use nohup to keep it running in background; redirect stdout/stderr to log
 nohup python manage.py listen_gateway >> "$LISTENER_LOG" 2>&1 &
