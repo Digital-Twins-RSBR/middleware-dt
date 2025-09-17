@@ -226,7 +226,9 @@ class Property(models.Model):
         if self.type == 'Boolean':
             key = f'{key}_i'
             valor = int(valor)
-        tags = {"sensor": self.device.identifier, "source": "middts"}
+        # Prefer ThingsBoard internal id (thingsboard_id) when available to avoid conflicts
+        sensor_id = self.device.identifier
+        tags = {"sensor": sensor_id, "source": "middts"}
         fields = {key: valor, "sent_timestamp": timestamp}
         data = format_influx_line("device_data", tags, fields, timestamp=timestamp)
         response = requests.post(INFLUXDB_URL, headers=headers, data=data)

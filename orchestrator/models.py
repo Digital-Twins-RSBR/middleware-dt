@@ -344,6 +344,7 @@ class DigitalTwinInstanceProperty(models.Model):
             if self.property.isCausal():
                 # self.suggest_device_binding()
                 # called_binding = True
+                pass
         old_value = DigitalTwinInstanceProperty.objects.get(pk=self.id).value if self.id else ''
         super().save(*args, **kwargs)
         # Se a associação automática foi feita, garantir persistência
