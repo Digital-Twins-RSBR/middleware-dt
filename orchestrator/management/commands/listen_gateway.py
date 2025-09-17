@@ -37,9 +37,20 @@ class Command(BaseCommand):
         # Failure counters and last-log timestamps to throttle noisy errors
         self.failure_counts = defaultdict(int)
         self.last_log_at = defaultdict(lambda: 0.0)
+        # Token cache and per-gateway HTTP sessions to reduce auth/connection overhead
+        self.token_cache = {}  # gateway_id -> {'token': str, 'expires_at': epoch_seconds}
+        self.sessions = {}  # gateway_id -> requests.Session()
+        # Concurrency semaphore will be set in handle() from CLI options
+        self.sem = None
 
     async def get_jwt_token(self, device):
         gateway = device.gateway
+        # Check token cache first
+        gw_id = getattr(gateway, 'id', None)
+        if gw_id is not None:
+            cached = self.token_cache.get(gw_id)
+            if cached and cached.get('token') and cached.get('expires_at', 0) > time.time():
+                return cached['token']
         url = f"{gateway.url}/api/auth/login"
         payload = {
             "username": gateway.username,
@@ -72,6 +83,16 @@ class Command(BaseCommand):
                 logger.warning(f"Auth response from {url} did not provide a token: {response.text}")
                 raise Exception("Empty token returned from auth endpoint")
 
+            # cache token for 23 hours to avoid repeated logins
+            if gw_id is not None:
+                try:
+                    self.token_cache[gw_id] = {
+                        'token': token,
+                        'expires_at': time.time() + (23 * 3600)
+                    }
+                except Exception:
+                    pass
+
             return token
         except Exception as e:
             # exponential backoff: cap at 60s
@@ -100,6 +121,24 @@ class Command(BaseCommand):
         scheme = 'wss' if parsed.scheme == 'https' else 'ws'
         return f"{scheme}://{netloc}/api/ws/plugins/telemetry?token={jwt_token}"
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--concurrency',
+            type=int,
+            help='Maximum concurrent HTTP requests when checking device status (defaults to unlimited)'
+        )
+        parser.add_argument(
+            '--use-influxdb',
+            action='store_true',
+            help='Enable writing to InfluxDB (overrides default)'
+        )
+        parser.add_argument(
+            '--interval',
+            type=int,
+            default=5,
+            help='Polling interval in seconds to refresh device list and tasks (default: 5)'
+        )
+
     async def listen(self):
         while True:
             dtinstanceproperties = await sync_to_async(list)(DigitalTwinInstanceProperty.objects.filter(
@@ -124,7 +163,9 @@ class Command(BaseCommand):
                     del self.active_tasks[device_id]
                     logger.info(f"Stopped listening for device {device_id}")
 
-            await asyncio.sleep(30)  # Verificar novos dispositivos a cada 10 minutos
+            # Sleep using configured interval (default 5s for higher responsiveness)
+            sleep_interval = getattr(self, 'poll_interval', 5)
+            await asyncio.sleep(sleep_interval)
 
     async def listen_to_device(self, device):
         while True:
@@ -189,7 +230,18 @@ class Command(BaseCommand):
                 "Content-Type": "application/json",
                 "X-Authorization": f"Bearer {jwt_token}"
             }
-            response = await sync_to_async(requests.get)(url, headers=headers)
+            # Use session per gateway to reuse connections
+            gw_id = getattr(device.gateway, 'id', None)
+            if gw_id not in self.sessions:
+                self.sessions[gw_id] = requests.Session()
+            session = self.sessions[gw_id]
+            timeout_seconds = 3
+            # If a semaphore was configured, acquire it to limit concurrency
+            if self.sem is not None:
+                async with self.sem:
+                    response = await sync_to_async(session.get)(url, headers=headers, timeout=timeout_seconds)
+            else:
+                response = await sync_to_async(session.get)(url, headers=headers, timeout=timeout_seconds)
             if response.status_code == 200:
                 attributes = response.json()
                 # Verifica o atributo de status do dispositivo
@@ -352,7 +404,18 @@ class Command(BaseCommand):
                     logger.exception(f"Error processing property {key} for device {device.name}: {e}")
 
     def handle(self, *args, **options):
-        self.use_influxdb = USE_INFLUX_TO_EVALUATE  # Atualiza o parâmetro com o valor passado
+        # CLI options: allow override of influx usage and concurrency
+        concurrency = options.get('concurrency', None)
+        self.use_influxdb = options.get('use_influxdb', USE_INFLUX_TO_EVALUATE)
+        # polling interval in seconds for refreshing device list
+        self.poll_interval = options.get('interval', 5)
+        if concurrency:
+            try:
+                concurrency_val = int(concurrency)
+                self.sem = asyncio.Semaphore(concurrency_val)
+            except Exception:
+                self.sem = None
+
         loop = asyncio.get_event_loop()
         try:
             logger.info("Starting WebSocket listener...")

@@ -33,9 +33,10 @@ joined = join(tables: {m: middts_sent, s: simulator_recv}, on: ["sensor"])
   }))
   |> filter(fn: (r) => exists r.sent_timestamp and exists r.received_timestamp and r.latency_ms >= 0.0)
 
-// Per-event: keep the minimum latency if there are duplicates
+// Per-received-event: for each received_timestamp pick the smallest latency
+// (this chooses the closest middts sent_timestamp that occurred before the receive)
 per_event = joined
-  |> group(columns: ["sensor", "sent_timestamp"]) 
+  |> group(columns: ["sensor", "received_timestamp"]) 
   |> min(column: "latency_ms")
 
 // Output per-event latencies

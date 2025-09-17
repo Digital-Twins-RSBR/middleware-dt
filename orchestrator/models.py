@@ -272,7 +272,9 @@ class DigitalTwinInstanceProperty(models.Model):
         return f"{self.dtinstance}({self.device_property.device.name if self.device_property else 'Sem dispositivo'}) {self.property} {'(Causal)' if self.property.isCausal() else ''} {self.value}"
     
     class Meta:
-        unique_together = ('dtinstance', 'property', 'device_property')
+        # Ensure uniqueness per dtinstance + property. device_property may be nullable and
+        # should not cause duplicate logical properties when associating devices.
+        unique_together = ('dtinstance', 'property')
         verbose_name = "Digital twin instance property"
         verbose_name_plural = "Digital twin instances properties"
 
@@ -359,6 +361,27 @@ class DigitalTwinInstanceProperty(models.Model):
             if device_property.value != self.value:
                 self.value = old_value if old_value else device_property.value if device_property.value else ''
                 super().save(*args, **kwargs)
+
+    @classmethod
+    def dedupe_for_instance(cls, dtinstance):
+        """Remove duplicate DigitalTwinInstanceProperty rows for the given instance.
+        Keeps the row that has a non-null device_property if present, else keeps the first.
+        Returns number of removed rows."""
+        qs = cls.objects.filter(dtinstance=dtinstance).order_by('property_id', '-device_property_id', 'id')
+        removed = 0
+        seen = set()
+        for row in qs:
+            key = (row.property_id)
+            if key in seen:
+                # duplicate - delete
+                try:
+                    row.delete()
+                    removed += 1
+                except Exception:
+                    pass
+            else:
+                seen.add(key)
+        return removed
 
     def causal(self):
         return self.property.isCausal()

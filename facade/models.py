@@ -9,7 +9,8 @@ from django.conf import settings
 from django.db import models
 from django.contrib.auth.models import User
 from enum import Enum
-from facade.utils import format_influx_line
+from facade.utils import format_influx_line, get_session_for_gateway
+import traceback
 
 from core.models import GatewayIOT
 # INFLUX configuration
@@ -21,6 +22,8 @@ INFLUXDB_URL = f"http://{INFLUXDB_HOST}:{INFLUXDB_PORT}/api/v2/write?org={INFLUX
 INFLUXDB_TOKEN = settings.INFLUXDB_TOKEN
 
 USE_INFLUX_TO_EVALUATE = settings.USE_INFLUX_TO_EVALUATE
+
+# Session helper moved to facade.utils.get_session_for_gateway
 
 
 class DeviceType(models.Model):
@@ -319,23 +322,46 @@ class Property(models.Model):
                     # keep RPC path functioning even if Influx recording fails
                     pass
 
+                # Use a session with retries and a larger timeout for POST
                 try:
-                    # Use a reasonable timeout so middts doesn't hang indefinitely
-                    response = requests.post(
-                        urltwoway, json={"method": self.rpc_write_method, "params": self.get_value()}, headers=headers, timeout=5
+                    session = get_session_for_gateway(gateway.id)
+                    response = session.post(
+                        urltwoway, json={"method": self.rpc_write_method, "params": self.get_value()}, headers=headers, timeout=8
                     )
-                except requests.Timeout as te:
-                    # Let the Timeout bubble up so it appears in container logs (middts_start.log)
+                except requests.exceptions.ReadTimeout as te:
+                    # Log and return a pseudo-response indicating timeout so callers can handle it
                     print(f"RPC timeout when calling {self.rpc_write_method} for device {device.identifier}: {te}")
-                    raise
+                    class _R:
+                        status_code = 504
+                        text = str(te)
+                    return _R()
                 except Exception as e:
-                    # For generic RPC errors, surface the exception so the container log records the traceback
+                    # For generic RPC errors, log traceback and return a 503-like pseudo-response
                     print(f"RPC error when calling {self.rpc_write_method} for device {device.identifier}: {e}")
-                    raise
+                    traceback.print_exc()
+                    class _R:
+                        status_code = 503
+                        text = str(e)
+                    return _R()
             elif rpc_type is RPCCallTypes.READ and self.rpc_read_method:
-                response = requests.post(
-                    urltwoway, json={"method": self.rpc_read_method}, headers=headers
-                )
+                try:
+                    session = get_session_for_gateway(gateway.id)
+                    response = session.post(
+                        urltwoway, json={"method": self.rpc_read_method}, headers=headers, timeout=6
+                    )
+                except requests.exceptions.ReadTimeout as te:
+                    print(f"RPC read timeout when calling {self.rpc_read_method} for device {device.identifier}: {te}")
+                    class _R:
+                        status_code = 504
+                        text = str(te)
+                    return _R()
+                except Exception as e:
+                    print(f"RPC read error when calling {self.rpc_read_method} for device {device.identifier}: {e}")
+                    traceback.print_exc()
+                    class _R:
+                        status_code = 503
+                        text = str(e)
+                    return _R()
             status_code = response.status_code
 
             #Precisa alterar self.value com o retorno da leitura. Sendo que eu também preciso modficar o atributo value da instância do digital twin. Essa lógica pode ficar no procedimento de registrar as chamadas
