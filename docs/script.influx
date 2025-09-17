@@ -21,18 +21,4 @@ midttsData = from(bucket: "data")
   |> sort(columns: ["_time"], desc: false)  // Ordena pelo tempo
 joinedData = join(
   tables: {simulator: simulatorData, midtts: midttsData},
-  on: ["sensor"]
-)
-  |> filter(fn: (r) => exists r.sent_timestamp and exists r.received_timestamp)  // Garante que os valores existam
-  |> filter(fn: (r) => r.received_timestamp > r.sent_timestamp)  // Garante pareamento correto
-  |> map(fn: (r) => ({
-      _time: r._time,  // Mantém o tempo do evento recebido como referência
-      sensor: r.sensor,
-      sent_timestamp: r.sent_timestamp,
-      received_timestamp: r.received_timestamp,
-      latency_ms: float(v: (r.received_timestamp - r.sent_timestamp))  // Calcula a latência correta
-  }))
-  |> group(columns: ["sensor", "sent_timestamp"])  // Mantém a relação entre envio e recebimento
-  |> min(column: "latency_ms")  // Mantém apenas o menor received_timestamp para cada sent_timestamp
-  |> yield(name: "latency_simulator_to_middts")
   

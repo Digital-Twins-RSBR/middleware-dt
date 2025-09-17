@@ -10,15 +10,16 @@ def _format_field_value(v):
     except Exception:
         Decimal = None
     # Allow explicit 'raw' integer-suffixed strings (e.g. '0i') to pass through
+    # (keeps backwards compatibility for intentionally crafted literals)
     if isinstance(v, str) and v.endswith('i'):
-        # accept negative integers as well
         core = v[:-1]
         if core.lstrip('-').isdigit():
             return v
+    # Normalize booleans and integers to floats to avoid Influx field-type conflicts
     if isinstance(v, bool):
-        return f"{1 if v else 0}i"
+        return str(1.0 if v else 0.0)
     if isinstance(v, int):
-        return f"{v}i"
+        return str(float(v))
     if Decimal and isinstance(v, Decimal):
         return str(float(v))
     try:

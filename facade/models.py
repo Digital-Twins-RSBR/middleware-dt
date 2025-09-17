@@ -223,7 +223,7 @@ class Property(models.Model):
         # Envia os dados para o InfluxDB registrando o evento
         key = self.name
         valor = self.get_value()
-        # Force integer types for Boolean and Integer so influx field type is integer
+        # Normalize boolean/integer values to numeric floats to avoid Influx type conflicts
         if self.type == 'Boolean' or self.type == 'Integer':
             try:
                 ival = int(valor)
@@ -235,15 +235,15 @@ class Property(models.Model):
                         ival = int(float(valor))
                     except Exception:
                         ival = 0
-            # send explicit Influx integer literal as string 'Ni'
-            valor = f"{ival}i"
+            # Use float representation (e.g., 1.0) to maintain consistent field type
+            valor = float(ival)
         # Prefer ThingsBoard internal id (thingsboard_id) when available to avoid conflicts
         sensor_id = self.device.identifier
         tags = {"sensor": sensor_id, "source": "middts"}
         fields = {key: valor, "sent_timestamp": timestamp}
         data = format_influx_line("device_data", tags, fields, timestamp=timestamp)
         response = requests.post(INFLUXDB_URL, headers=headers, data=data)
-        print(f"Response Code: {response.status_code}, Response Text: {response.text}")
+        print(f"Response Code: {response.status_code}, Response Text: {response.text} - Data Sent: {data}")
     
     def save(self, *args, **kwargs):
         old_value = ''
@@ -281,10 +281,57 @@ class Property(models.Model):
 
             #Quando salvar e se tiver método write, executa a chamada
             if rpc_type is RPCCallTypes.WRITE and self.rpc_write_method:
+                # Record sent_timestamp to Influx immediately when issuing a WRITE RPC.
+                # This ensures we have a sent_timestamp even if the RPC response code
+                # is not 200 or if other code paths don't trigger Property.write_influx().
+                try:
+                    if USE_INFLUX_TO_EVALUATE and INFLUXDB_TOKEN:
+                        try:
+                            send_ts = int(time.time() * 1000)
+                            sensor_id = device.identifier
+                            tags = {"sensor": sensor_id, "source": "middts"}
+                            # Normalize value similar to write_influx to avoid type conflicts
+                            field_value = self.get_value()
+                            if self.type == 'Boolean' or self.type == 'Integer':
+                                try:
+                                    ival = int(field_value)
+                                except Exception:
+                                    if self.type == 'Boolean':
+                                        ival = 1 if str(field_value).lower() in ('true', '1', 'yes') else 0
+                                    else:
+                                        try:
+                                            ival = int(float(field_value))
+                                        except Exception:
+                                            ival = 0
+                                # use float representation for consistency
+                                field_value = float(ival)
+                            fields = {self.name: field_value, "sent_timestamp": send_ts}
+                            measurement = format_influx_line("device_data", tags, fields, timestamp=send_ts)
+                            # best-effort POST, ignore failures (we still attempt the RPC)
+                            try:
+                                _resp = requests.post(INFLUXDB_URL, headers={"Authorization": f"Token {INFLUXDB_TOKEN}", "Content-Type": "text/plain"}, data=measurement, timeout=2)
+                            except Exception:
+                                pass
+                        except Exception:
+                            # non-fatal: continue to issue RPC
+                            pass
+                except Exception:
+                    # keep RPC path functioning even if Influx recording fails
+                    pass
 
-                response = requests.post(
-                    urltwoway, json={"method": self.rpc_write_method, "params": self.get_value()}, headers=headers
-                )
+                try:
+                    # Use a reasonable timeout so middts doesn't hang indefinitely
+                    response = requests.post(
+                        urltwoway, json={"method": self.rpc_write_method, "params": self.get_value()}, headers=headers, timeout=5
+                    )
+                except requests.Timeout as te:
+                    # Let the Timeout bubble up so it appears in container logs (middts_start.log)
+                    print(f"RPC timeout when calling {self.rpc_write_method} for device {device.identifier}: {te}")
+                    raise
+                except Exception as e:
+                    # For generic RPC errors, surface the exception so the container log records the traceback
+                    print(f"RPC error when calling {self.rpc_write_method} for device {device.identifier}: {e}")
+                    raise
             elif rpc_type is RPCCallTypes.READ and self.rpc_read_method:
                 response = requests.post(
                     urltwoway, json={"method": self.rpc_read_method}, headers=headers
@@ -326,11 +373,10 @@ def write_inactivity_event(device, inactivity_type: InactivityType, error_messag
         f"type={inactivity_type.value}"
     ]
     
-    # Build fields section - use numeric fields for aggregation
-    # Use numeric typed values (integers) for inactivity fields
+    # Build fields section - use numeric floats for aggregation
     fields = [
-        f"inactivity_timeout={int(timeout)}i",
-        "status=1i"
+        f"inactivity_timeout={float(int(timeout))}",
+        f"status={float(1.0)}"
     ]
     
     if error_message:
@@ -339,8 +385,8 @@ def write_inactivity_event(device, inactivity_type: InactivityType, error_messag
     
     # Construct measurement in proper InfluxDB line protocol format using helper
     tags_dict = {"device": device.identifier, "type": inactivity_type.value}
-    # Use explicit integer literals for Influx
-    fields_dict = {"inactivity_timeout": int(timeout), "status": f"{1}i"}
+    # Use numeric floats for fields to avoid conflicts (Influx will store as float)
+    fields_dict = {"inactivity_timeout": float(int(timeout)), "status": float(1.0)}
     if error_message:
         fields_dict["error_message"] = error_message
     measurement = format_influx_line("device_inactivity", tags_dict, fields_dict, timestamp=timestamp)

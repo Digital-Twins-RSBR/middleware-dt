@@ -335,8 +335,12 @@ class Command(BaseCommand):
                         tags = {"sensor": sensor_id, "source": "middts"}
                         # Ensure numeric types for booleans/ints; send explicit integer suffix for status-like fields
                         if key.lower() in ('status', 'active'):
-                            # send as explicit integer literal '0i' or '1i'
-                            fields = {key: f"{int(property_value)}i", "received_timestamp": timestamp}
+                            # send as float 1.0/0.0 to avoid Influx integer/float conflicts
+                            try:
+                                pv = float(property_value)
+                            except Exception:
+                                pv = 1.0 if int(property_value) else 0.0
+                            fields = {key: pv, "received_timestamp": timestamp}
                         else:
                             fields = {key: property_value, "received_timestamp": timestamp}
                         data = format_influx_line("device_data", tags, fields, timestamp=timestamp)
