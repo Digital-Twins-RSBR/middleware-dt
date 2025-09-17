@@ -301,11 +301,32 @@ class Command(BaseCommand):
                     if self.use_influxdb and device_active:
                         timestamp = int(time.time() * 1000)
                         property = await sync_to_async(lambda: Property.objects.filter(device=device, name=key).first())()
-                        if isinstance(property.get_value(), bool):
-                            key = f'{key}_i'
-                            property_value = int(property.get_value())
+                        # Do not append _i to the key. Force integer types for Boolean/Integer properties
+                        if property:
+                            try:
+                                ptype = property.type
+                            except Exception:
+                                ptype = None
+                            if ptype in ('Boolean', 'Integer'):
+                                # ensure Python int so format_influx_line will render as integer (with i suffix)
+                                try:
+                                    property_value = int(property.get_value())
+                                except Exception:
+                                    # fallback: coerce from the raw telemetry value
+                                    try:
+                                        property_value = int(valor)
+                                    except Exception:
+                                        property_value = 0
+                            elif ptype == 'Double':
+                                try:
+                                    property_value = float(property.get_value())
+                                except Exception:
+                                    property_value = property.get_value()
+                            else:
+                                property_value = property.get_value()
                         else:
-                            property_value = property.get_value()
+                            # no local Property found — use the raw telemetry value
+                            property_value = valor
                         
                         # Envia apenas o received_timestamp para o InfluxDB using safe formatter
                         # Prefer ThingsBoard internal id (thingsboard_id) when available to avoid

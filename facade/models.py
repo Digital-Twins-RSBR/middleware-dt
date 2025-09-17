@@ -223,9 +223,19 @@ class Property(models.Model):
         # Envia os dados para o InfluxDB registrando o evento
         key = self.name
         valor = self.get_value()
-        if self.type == 'Boolean':
-            key = f'{key}_i'
-            valor = int(valor)
+        # Force integer types for Boolean and Integer so influx field type is integer
+        if self.type == 'Boolean' or self.type == 'Integer':
+            try:
+                valor = int(valor)
+            except Exception:
+                # fallback if parsing fails
+                if self.type == 'Boolean':
+                    valor = 1 if str(valor).lower() in ('true', '1', 'yes') else 0
+                else:
+                    try:
+                        valor = int(float(valor))
+                    except Exception:
+                        valor = 0
         # Prefer ThingsBoard internal id (thingsboard_id) when available to avoid conflicts
         sensor_id = self.device.identifier
         tags = {"sensor": sensor_id, "source": "middts"}
@@ -316,9 +326,10 @@ def write_inactivity_event(device, inactivity_type: InactivityType, error_messag
     ]
     
     # Build fields section - use numeric fields for aggregation
+    # Use numeric typed values (integers) for inactivity fields
     fields = [
-        f"inactivity_timeout={timeout}i",
-        "status=1i"  # Numeric status field for aggregation
+        f"inactivity_timeout={int(timeout)}i",
+        "status=1i"
     ]
     
     if error_message:
@@ -327,7 +338,7 @@ def write_inactivity_event(device, inactivity_type: InactivityType, error_messag
     
     # Construct measurement in proper InfluxDB line protocol format using helper
     tags_dict = {"device": device.identifier, "type": inactivity_type.value}
-    fields_dict = {"inactivity_timeout": timeout, "status": 1}
+    fields_dict = {"inactivity_timeout": int(timeout), "status": 1}
     if error_message:
         fields_dict["error_message"] = error_message
     measurement = format_influx_line("device_inactivity", tags_dict, fields_dict, timestamp=timestamp)
