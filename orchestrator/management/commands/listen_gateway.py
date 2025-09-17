@@ -302,6 +302,7 @@ class Command(BaseCommand):
                         timestamp = int(time.time() * 1000)
                         property = await sync_to_async(lambda: Property.objects.filter(device=device, name=key).first())()
                         if isinstance(property.get_value(), bool):
+                            key = f'{key}_i'
                             property_value = int(property.get_value())
                         else:
                             property_value = property.get_value()
