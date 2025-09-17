@@ -221,11 +221,13 @@ class Property(models.Model):
                 "Content-Type": "text/plain"
             }
         # Envia os dados para o InfluxDB registrando o evento
+        key = self.name
         valor = self.get_value()
         if self.type == 'Boolean':
+            key = f'{key}_i'
             valor = int(valor)
         tags = {"sensor": self.device.identifier, "source": "middts"}
-        fields = {self.name: valor, "sent_timestamp": timestamp}
+        fields = {key: valor, "sent_timestamp": timestamp}
         data = format_influx_line("device_data", tags, fields, timestamp=timestamp)
         response = requests.post(INFLUXDB_URL, headers=headers, data=data)
         print(f"Response Code: {response.status_code}, Response Text: {response.text}")
