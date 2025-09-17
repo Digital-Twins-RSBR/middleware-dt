@@ -130,7 +130,8 @@ class Command(BaseCommand):
         parser.add_argument(
             '--use-influxdb',
             action='store_true',
-            help='Enable writing to InfluxDB (overrides default)'
+            default=None,
+            help='Enable writing to InfluxDB (overrides default). If omitted, the setting USE_INFLUX_TO_EVALUATE is used.'
         )
         parser.add_argument(
             '--interval',
@@ -396,8 +397,9 @@ class Command(BaseCommand):
                         else:
                             fields = {key: property_value, "received_timestamp": timestamp}
                         data = format_influx_line("device_data", tags, fields, timestamp=timestamp)
+                        logger.debug(f"Posting to InfluxDB (middts listener): {data}")
                         response = requests.post(INFLUXDB_URL, headers=headers, data=data)
-                        logger.info(f"Response Code: {response.status_code}, Response Text: {response.text}")
+                        logger.info(f"Response Code: {response.status_code}, Response Text: {response.text} - Data Sent: {data}")
                         logger.info(f"Updated property for {device.name} - {key}: {valor} and sent to InfluxDB with received_timestamp")
 
                 except Exception as e:
@@ -406,7 +408,20 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         # CLI options: allow override of influx usage and concurrency
         concurrency = options.get('concurrency', None)
-        self.use_influxdb = options.get('use_influxdb', USE_INFLUX_TO_EVALUATE)
+        # Determine whether to write to InfluxDB.
+        # CLI flag (--use-influxdb) is explicit True when provided. We set its default to None so
+        # we can differentiate "flag not provided" from "flag provided as false".
+        cli_flag = options.get('use_influxdb', None)
+        if cli_flag is None:
+            # Respect the settings value. Settings may come from environment and could be a string.
+            env_val = USE_INFLUX_TO_EVALUATE
+            if isinstance(env_val, str):
+                self.use_influxdb = env_val.strip().lower() in ('1', 'true', 'yes', 'y')
+            else:
+                self.use_influxdb = bool(env_val)
+        else:
+            # CLI flag explicitly provided => use it (True). Note: action='store_true' only sets True when passed.
+            self.use_influxdb = bool(cli_flag)
         # polling interval in seconds for refreshing device list
         self.poll_interval = options.get('interval', 5)
         if concurrency:
@@ -419,6 +434,7 @@ class Command(BaseCommand):
         loop = asyncio.get_event_loop()
         try:
             logger.info("Starting WebSocket listener...")
+            logger.info(f"Influx writes enabled: {self.use_influxdb}")
             loop.run_until_complete(self.listen())
         except KeyboardInterrupt:
             logger.info("Stopping WebSocket listener...")
