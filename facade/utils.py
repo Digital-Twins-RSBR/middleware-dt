@@ -9,6 +9,12 @@ def _format_field_value(v):
         from decimal import Decimal
     except Exception:
         Decimal = None
+    # Allow explicit 'raw' integer-suffixed strings (e.g. '0i') to pass through
+    if isinstance(v, str) and v.endswith('i'):
+        # accept negative integers as well
+        core = v[:-1]
+        if core.lstrip('-').isdigit():
+            return v
     if isinstance(v, bool):
         return f"{1 if v else 0}i"
     if isinstance(v, int):

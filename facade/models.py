@@ -226,16 +226,17 @@ class Property(models.Model):
         # Force integer types for Boolean and Integer so influx field type is integer
         if self.type == 'Boolean' or self.type == 'Integer':
             try:
-                valor = int(valor)
+                ival = int(valor)
             except Exception:
-                # fallback if parsing fails
                 if self.type == 'Boolean':
-                    valor = 1 if str(valor).lower() in ('true', '1', 'yes') else 0
+                    ival = 1 if str(valor).lower() in ('true', '1', 'yes') else 0
                 else:
                     try:
-                        valor = int(float(valor))
+                        ival = int(float(valor))
                     except Exception:
-                        valor = 0
+                        ival = 0
+            # send explicit Influx integer literal as string 'Ni'
+            valor = f"{ival}i"
         # Prefer ThingsBoard internal id (thingsboard_id) when available to avoid conflicts
         sensor_id = self.device.identifier
         tags = {"sensor": sensor_id, "source": "middts"}
@@ -338,7 +339,8 @@ def write_inactivity_event(device, inactivity_type: InactivityType, error_messag
     
     # Construct measurement in proper InfluxDB line protocol format using helper
     tags_dict = {"device": device.identifier, "type": inactivity_type.value}
-    fields_dict = {"inactivity_timeout": int(timeout), "status": 1}
+    # Use explicit integer literals for Influx
+    fields_dict = {"inactivity_timeout": int(timeout), "status": f"{1}i"}
     if error_message:
         fields_dict["error_message"] = error_message
     measurement = format_influx_line("device_inactivity", tags_dict, fields_dict, timestamp=timestamp)

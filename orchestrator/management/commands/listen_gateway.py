@@ -333,8 +333,12 @@ class Command(BaseCommand):
                         # conflicts with friendly names. Fall back to device.identifier.
                         sensor_id = device.identifier
                         tags = {"sensor": sensor_id, "source": "middts"}
-                        # Ensure numeric types for booleans/ints
-                        fields = {key: property_value, "received_timestamp": timestamp}
+                        # Ensure numeric types for booleans/ints; send explicit integer suffix for status-like fields
+                        if key.lower() in ('status', 'active'):
+                            # send as explicit integer literal '0i' or '1i'
+                            fields = {key: f"{int(property_value)}i", "received_timestamp": timestamp}
+                        else:
+                            fields = {key: property_value, "received_timestamp": timestamp}
                         data = format_influx_line("device_data", tags, fields, timestamp=timestamp)
                         response = requests.post(INFLUXDB_URL, headers=headers, data=data)
                         logger.info(f"Response Code: {response.status_code}, Response Text: {response.text}")
