@@ -4,7 +4,7 @@
 
 import "experimental"
 
-// Use the explorer-selected bucket (v.bucket) so the script works when pasted
+// Use the explorer-selected bucket ("iot_data") so the script works when pasted
 // into the Data Explorer without editing the bucket name.
 // Read middts sent timestamps (events sent by middts toward devices/simulator)
 middts_sent = from(bucket: "iot_data")
