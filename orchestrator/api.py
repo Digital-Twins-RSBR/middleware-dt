@@ -321,6 +321,32 @@ def update_causal_property(
         # Atualiza o valor da propriedade
         property_obj.value = payload.value
         property_obj.save()
+        
+        # Captura timestamp de resposta M2S para correção de latência
+        try:
+            import time
+            from facade.utils import format_influx_line
+            from middleware_dt.settings import INFLUXDB_TOKEN, INFLUXDB_URL, USE_INFLUX_TO_EVALUATE
+            
+            if (USE_INFLUX_TO_EVALUATE and INFLUXDB_TOKEN and 
+                property_obj.device_property and property_obj.device_property.device):
+                response_timestamp = int(time.time() * 1000)
+                sensor_id = property_obj.device_property.device.identifier
+                tags = {"sensor": sensor_id, "source": "middts"}
+                fields = {"sent_timestamp": response_timestamp}
+                data = format_influx_line("device_data", tags, fields, timestamp=response_timestamp)
+                
+                import requests
+                requests.post(
+                    INFLUXDB_URL,
+                    headers={"Authorization": f"Token {INFLUXDB_TOKEN}", "Content-Type": "text/plain"},
+                    data=data,
+                    timeout=0.1
+                )
+                print(f"M2S response timestamp logged for {sensor_id}")
+        except Exception as e:
+            print(f"M2S timestamp logging failed: {e}")
+        
         return DigitalTwinInstancePropertySchema.from_instance(property_obj)
 
     except DigitalTwinInstanceProperty.DoesNotExist:

@@ -1,6 +1,18 @@
 #!/bin/sh
 set -e
 
+# Inicia Redis em background para URLLC Session Manager
+echo "[entrypoint] Iniciando Redis server para URLLC Session Manager..."
+redis-server --daemonize yes --port 6379 --bind 127.0.0.1 --maxmemory 64mb --maxmemory-policy volatile-lru
+sleep 2
+
+# Verifica se Redis está rodando
+if redis-cli ping >/dev/null 2>&1; then
+    echo "[entrypoint] ✅ Redis server iniciado com sucesso"
+else
+    echo "[entrypoint] ⚠️ Redis falhou ao iniciar, continuando sem Redis"
+fi
+
 # Carrega .env se existir
 
 # Carrega .env de forma robusta, exportando cada variável

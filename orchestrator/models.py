@@ -341,26 +341,101 @@ class DigitalTwinInstanceProperty(models.Model):
             print(f"[MIDDTS] Associação automática: '{self.property.name}' (DT: {dt_text}) → '{best_match.name}' (Device: {best_device_text}) (score: {best_score:.2f})")
 
     def save(self, *args, **kwargs):
+        import time
+        from datetime import datetime
+        
+        save_start = time.time()
+        property_name = getattr(self.property, 'name', f'prop_{getattr(self, "id", "new")}')
+        print(f"[{datetime.now().isoformat()}] 💾 SAVE START: Property '{property_name}' (DT: {getattr(self.dtinstance, 'id', 'unknown')})")
+        
+        # Allow callers to opt-out of propagating the DT property change to the
+        # associated device/ThingsBoard. This avoids blocking network calls in
+        # high-frequency/periodic updaters (e.g. update_causal_property).
+        propagate_to_device = True
+        if 'propagate_to_device' in kwargs:
+            try:
+                propagate_to_device = bool(kwargs.pop('propagate_to_device'))
+                print(f"[{datetime.now().isoformat()}] 🔧 Propagate to device: {propagate_to_device}")
+            except Exception:
+                propagate_to_device = True
+
         # called_binding = False
+        binding_start = time.time()
         if not self.device_property:
             if self.property.isCausal():
+                print(f"[{datetime.now().isoformat()}] 🔗 Property '{property_name}' is causal but has no device binding")
                 # self.suggest_device_binding()
                 # called_binding = True
                 pass
+        else:
+            print(f"[{datetime.now().isoformat()}] 🔗 Property '{property_name}' has device binding: {self.device_property.name}")
+        binding_time = time.time() - binding_start
+
+        # Get old value for comparison
+        old_value_start = time.time()
         old_value = DigitalTwinInstanceProperty.objects.get(pk=self.id).value if self.id else ''
+        old_value_time = time.time() - old_value_start
+        print(f"[{datetime.now().isoformat()}] 📊 Property '{property_name}' value change: '{old_value}' → '{self.value}' (fetch_time: {old_value_time:.3f}s)")
+        
+        # Save to database
+        db_save_start = time.time()
         super().save(*args, **kwargs)
+        db_save_time = time.time() - db_save_start
+        print(f"[{datetime.now().isoformat()}] 🗃️ Database save completed for '{property_name}' in {db_save_time:.3f}s")
+        
+        # Update device_property field if needed
+        device_update_start = time.time()
         # Se a associação automática foi feita, garantir persistência
         # if called_binding and self.device_property:
         if self.device_property:
             # Salva novamente para garantir que o device_property seja persistido
             super().save(update_fields=["device_property"])
-        if self.id and self.device_property and self.property.isCausal():
+        device_update_time = time.time() - device_update_start
+        print(f"[{datetime.now().isoformat()}] 🔗 Device property update for '{property_name}' took {device_update_time:.3f}s")
+
+        # Only propagate to the device (which may trigger ThingsBoard RPCs) when
+        # explicitly allowed. This avoids synchronous HTTP calls from periodic updaters.
+        propagation_time = 0
+        if propagate_to_device and self.id and self.device_property and self.property.isCausal():
+            propagation_start = time.time()
+            print(f"[{datetime.now().isoformat()}] 🚀 Starting device propagation for '{property_name}' to device '{self.device_property.name}'")
+            
             device_property = self.device_property
+            old_device_value = device_property.value
             device_property.value = self.value
+            
+            device_save_start = time.time()
+            print(f"[{datetime.now().isoformat()}] 📤 Saving to device property: '{old_device_value}' → '{device_property.value}'")
             device_property.save()
+            device_save_time = time.time() - device_save_start
+            print(f"[{datetime.now().isoformat()}] ✅ Device property save completed in {device_save_time:.3f}s")
+            
+            # Check if device changed the value back
+            verification_start = time.time()
             if device_property.value != self.value:
+                print(f"[{datetime.now().isoformat()}] ⚠️ Device property value changed during save: '{self.value}' → '{device_property.value}'")
                 self.value = old_value if old_value else device_property.value if device_property.value else ''
                 super().save(*args, **kwargs)
+            verification_time = time.time() - verification_start
+            
+            propagation_time = time.time() - propagation_start
+            print(f"[{datetime.now().isoformat()}] 🏁 Device propagation completed for '{property_name}' in {propagation_time:.3f}s (device_save: {device_save_time:.3f}s, verification: {verification_time:.3f}s)")
+        else:
+            if not propagate_to_device:
+                print(f"[{datetime.now().isoformat()}] ⏭️ Skipping device propagation for '{property_name}' (disabled)")
+            elif not self.device_property:
+                print(f"[{datetime.now().isoformat()}] ⏭️ Skipping device propagation for '{property_name}' (no device binding)")
+            elif not self.property.isCausal():
+                print(f"[{datetime.now().isoformat()}] ⏭️ Skipping device propagation for '{property_name}' (not causal)")
+
+        total_save_time = time.time() - save_start
+        print(f"[{datetime.now().isoformat()}] 💾 SAVE COMPLETE: Property '{property_name}' total time: {total_save_time:.3f}s (binding: {binding_time:.3f}s, db_save: {db_save_time:.3f}s, device_update: {device_update_time:.3f}s, propagation: {propagation_time:.3f}s)")
+        
+        # Log performance warnings
+        if total_save_time > 1.0:
+            print(f"[{datetime.now().isoformat()}] 🐌 SLOW SAVE WARNING: Property '{property_name}' took {total_save_time:.3f}s (threshold: 1.0s)")
+        if propagation_time > 0.5:
+            print(f"[{datetime.now().isoformat()}] 🐌 SLOW PROPAGATION WARNING: Property '{property_name}' propagation took {propagation_time:.3f}s (threshold: 0.5s)")
 
     @classmethod
     def dedupe_for_instance(cls, dtinstance):
