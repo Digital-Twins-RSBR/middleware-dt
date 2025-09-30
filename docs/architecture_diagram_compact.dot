@@ -1,0 +1,30 @@
+// Compact architecture diagram for middleware-dt
+// Render with: dot -Tpng docs/architecture_diagram_compact.dot -o docs/architecture_diagram_compact.png
+
+digraph middts_compact {
+  rankdir=LR;
+  node [shape=box, style=rounded, fontsize=10, fixedsize=false];
+
+  core [label="core\n(config + auth)", fillcolor="#f2f2f2", style=filled];
+  facade [label="facade\n(device & property adapter, RPC, Influx)", fillcolor="#dff0d8", style=filled];
+  orchestrator [label="orchestrator\n(DTDL models, instances, binding)", fillcolor="#fbe6c2", style=filled];
+
+  tb [label="ThingsBoard / Gateway\n(RPC, metadata)", shape=ellipse, fillcolor="#e7e6ff", style=filled];
+  influx [label="InfluxDB\n(telemetry)", shape=ellipse, fillcolor="#e7e6ff", style=filled];
+  parser [label="DTDL Parser\n(external)", shape=ellipse, fillcolor="#e7e6ff", style=filled];
+
+  core -> facade [label="tokens / config", fontsize=9];
+  facade -> tb [label="RPC / metadata", fontsize=9];
+  facade -> influx [label="telemetry / events", fontsize=9];
+  orchestrator -> parser [label="parse DTDL", fontsize=9];
+  orchestrator -> facade [label="semantic binding / causal writes", fontsize=9];
+  core -> orchestrator [label="parser config", fontsize=9, style=dashed];
+
+  // API / entry point for middleware clients
+  api [label="API / HTTP endpoints\n(client entry point)", shape=note, fillcolor="#fff2cc", style=filled];
+  api -> core [label="manage configs / auth", fontsize=9];
+  api -> orchestrator [label="create DT instances / queries", fontsize=9];
+  api -> facade [label="trigger writes / query properties", fontsize=9];
+
+  { rank=same; core; facade; orchestrator }
+}

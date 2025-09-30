@@ -1,0 +1,68 @@
+// Architecture diagram for middleware-dt (Graphviz DOT)
+// Render with: dot -Tpng docs/architecture_diagram.dot -o docs/architecture_diagram.png
+
+digraph middts_arch {
+  rankdir=LR;
+  node [shape=box, style=filled, fillcolor="#f2f2f2", fontsize=11];
+
+  subgraph cluster_core {
+    label="core";
+    style=rounded;
+    color="#cfe2f3";
+    core_api [label="core API\n(manage GatewayIOT, DTDLParserClient)\n+ get_jwt_token_gateway()"];
+    gateway_config [label="GatewayIOT\n(credentials, url)", shape=note, fillcolor="#fff2cc"];
+    parser_client [label="DTDLParserClient\n(parser URL, active)", shape=note, fillcolor="#fff2cc"];
+  }
+
+  subgraph cluster_facade {
+    label="facade";
+    style=rounded;
+    color="#d9ead3";
+    device [label="Device\n(identifier, metadata)"];
+    property [label="Property\n(value, rpc_read/write)\n+ call_rpc(), write_influx()"];
+    threadmgr [label="ThreadManager\n(periodic tasks)", shape=component, fillcolor="#e7f3fe"];
+  }
+
+  subgraph cluster_orchestrator {
+    label="orchestrator";
+    style=rounded;
+    color="#fce5cd";
+    dtdl_model [label="DTDLModel\n(specification, parsed_specification)"];
+    dt_instance [label="DigitalTwinInstance\n(auto-create properties)"];
+    dt_prop [label="DigitalTwinInstanceProperty\n(semantic binding)"];
+    neo4j [label="Neo4j (optional)", shape=component, fillcolor="#e7f3fe"];
+  }
+
+  // External systems
+  thingsboard [label="ThingsBoard / Gateway\n(REST, RPC)", shape=ellipse, fillcolor="#d9d2e9"];
+  influx [label="InfluxDB\n(telemetry / events)", shape=ellipse, fillcolor="#d9d2e9"];
+  dtdl_parser [label="External DTDL Parser\n(HTTP)", shape=ellipse, fillcolor="#d9d2e9"];
+  user [label="User / API Client", shape=plaintext];
+
+  // Primary flows
+  user -> core_api [label="manage configs / request actions", fontsize=10];
+  core_api -> gateway_config [label="stores gateway config", style=dashed];
+  core_api -> parser_client [label="stores parser config", style=dashed];
+
+  // Facade interactions
+  core_api -> property [label="get_jwt_token_gateway() used by facade to obtain JWT", fontsize=10, style=dotted];
+  property -> thingsboard [label="RPC read/write (twoway)", fontsize=10];
+  device -> thingsboard [label="metadata / attributes sync (GET/POST)"];
+  property -> influx [label="write telemetry / events (line-protocol)"];
+  threadmgr -> dt_prop [label="schedule periodic reads", style=bold];
+
+  // Orchestrator interactions
+  dtdl_model -> dtdl_parser [label="POST model -> parser -> parsed_specification", fontsize=10];
+  dtdl_model -> dt_instance [label="create instances & properties"];
+  dt_instance -> dt_prop [label="create DT properties for each model element"];
+  dt_prop -> property [label="semantic binding -> facade.Property", fontsize=10];
+  dt_prop -> property [label="when causal: propagate writes -> device (RPC)", style=dashed, color="#aa0000"];
+  dt_instance -> neo4j [label="(optional) persist graph representation"];
+
+  // Config / discovery flows
+  parser_client -> dtdl_model [dir=back, style=dashed, label="used by DTDLModel.create_parsed_specification()"];
+  gateway_config -> property [dir=back, style=dashed, label="used by facade.get_jwt_token_gateway()"];
+
+  // Visual spacing
+  { rank=same; core_api; device; dtdl_model }
+}

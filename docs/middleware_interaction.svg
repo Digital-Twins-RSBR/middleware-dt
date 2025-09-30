@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="480" viewBox="0 0 1200 480">
+  <defs>
+    <style type="text/css"><![CDATA[
+      .box { fill: #f7f9fb; stroke: #2b6cb0; stroke-width: 2px; rx: 8px; }
+      .title { font: bold 14px sans-serif; fill: #1a202c; }
+      .label { font: 12px sans-serif; fill: #2d3748; }
+      .arrow { stroke: #2d3748; stroke-width: 2; marker-end: url(#arrowhead); }
+      .dashed { stroke-dasharray: 6 4; }
+      .note { font: 11px sans-serif; fill: #4a5568; }
+      .cloud { fill: #edf2f7; stroke: #cbd5e0; stroke-width: 1.5px; rx: 12px; }
+    ]]></style>
+    <marker id="arrowhead" viewBox="0 0 10 10" refX="10" refY="5" markerUnits="strokeWidth" markerWidth="8" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2d3748" />
+    </marker>
+  </defs>
+
+  <!-- Modules boxes -->
+  <g id="modules">
+    <rect x="48" y="64" width="280" height="120" class="box"/>
+    <text x="60" y="86" class="title">core</text>
+    <text x="60" y="106" class="label">GatewayIOT, DTDLParserClient</text>
+    <text x="60" y="124" class="label">JWT helper, parser endpoints</text>
+
+    <rect x="460" y="32" width="320" height="160" class="box"/>
+    <text x="475" y="54" class="title">facade</text>
+    <text x="475" y="74" class="label">Devices, Properties</text>
+    <text x="475" y="94" class="label">RPC, session manager</text>
+    <text x="475" y="114" class="label">Influx telemetry</text>
+
+    <rect x="920" y="64" width="260" height="120" class="box"/>
+    <text x="940" y="86" class="title">orchestrator</text>
+    <text x="940" y="106" class="label">DTDLModel, Instances</text>
+    <text x="940" y="124" class="label">Semantic binding</text>
+  </g>
+
+  <!-- External parser cloud -->
+  <rect x="540" y="220" width="240" height="64" class="cloud"/>
+  <text x="560" y="240" class="label">External</text>
+  <text x="560" y="256" class="label">DTDL Parser service</text>
+
+  <!-- Arrows and labels -->
+  <!-- facade -> core: request token -->
+  <path d="M 610 32 L 360 32" class="arrow" />
+  <text x="470" y="22" class="label">get JWT / gateway config</text>
+
+  <!-- core -> facade: provide token -->
+  <path d="M 328 64 L 460 64" class="arrow" />
+  <text x="360" y="54" class="label">token</text>
+
+  <!-- facade -> orchestrator: device inventory / telemetry (solid) -->
+  <path d="M 780 96 L 920 96" class="arrow" />
+  <text x="845" y="86" class="label">device inventory / telemetry</text>
+
+  <!-- orchestrator -> facade: propagate binding / trigger propagation (dashed) -->
+  <path d="M 920 140 L 780 140" class="arrow dashed" />
+  <text x="820" y="152" class="label">suggest binding / propagate causal property</text>
+
+  <!-- orchestrator -> external parser (down arrow) -->
+  <path d="M 1000 84 L 1000 220" class="arrow" />
+  <path d="M 760 252 L 1000 252" class="arrow" />
+  <path d="M 1000 252 L 1000 224" class="arrow" />
+  <text x="820" y="220" class="label">POST DTDL spec</text>
+
+  <!-- note -->
+  <text x="60" y="220" class="note">Typical sequence: (1) facade asks core for JWT; (2) facade discovers devices; (3) orchestrator requests parser, creates instances; (4) orchestrator suggests bindings, which may flow back to facade to perform RPCs.</text>
+
+  <!-- small legend -->
+  <rect x="48" y="320" width="320" height="120" class="box"/>
+  <text x="64" y="340" class="title">Legend</text>
+  <text x="64" y="360" class="label">Solid arrow: synchronous call / data flow</text>
+  <text x="64" y="378" class="label">Dashed arrow: optional/conditional flow (binding / propagation)</text>
+  <text x="64" y="396" class="label">Cloud: external service (DTDL parser)</text>
+
+</svg>

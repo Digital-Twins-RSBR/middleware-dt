@@ -1,0 +1,42 @@
+Middleware-dt architecture (ASCII)
+
+User/API Client
+    |
+    v
++----------------------+        +-------------------+
+|        core          | <----> |   DTDL Parser     |
+| - core API (Ninja)   |        | (external service)|
+| - GatewayIOT config  |        +-------------------+
+| - DTDLParserClient   |
++----------------------+
+    |       ^
+    |       |
+    v       | get parser config
++----------------------+           +---------------------+
+|       facade         |<--------->|   ThingsBoard / GW  |
+| - Device model       |   REST/RPC|  - device metadata   |
+| - Property model     |           |  - RPC endpoints     |
+| - ThreadManager      |           +---------------------+
+| - write to InfluxDB  |
++----------------------+                ^
+    |        |                          |
+    |        +----------------------+   |
+    |                               |   v
+    |                               | +----------------+
+    v                               +-|    InfluxDB     |
++----------------------+               +----------------+
+|   orchestrator       |
+| - DTDLModel (stores) |
+| - DigitalTwinInstance|
+| - DigitalTwinInstanceProperty (semantic binding)
+| - Neo4j (optional)
++----------------------+
+    |
+    v
+(semantic binding reads `facade.Property` rows and, when causal, writes back -> triggers RPC via facade)
+
+Notes:
+- `core` centralizes gateway and parser configs and exposes token retrieval used by `facade`.
+- `facade` handles low-level integration: obtaining JWT, issuing RPCs, persisting telemetry to Influx, periodic polling.
+- `orchestrator` is model-driven: it parses DTDL via an external parser, creates model elements and instance properties, then attempts automatic device binding using sentence embeddings.
+- InfluxDB receives telemetry and inactivity events; ThingsBoard is the source of truth for devices and RPC endpoints.
