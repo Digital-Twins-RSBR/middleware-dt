@@ -328,6 +328,12 @@ def update_causal_property(
             from facade.utils import format_influx_line
             from middleware_dt.settings import INFLUXDB_TOKEN, INFLUXDB_URL, USE_INFLUX_TO_EVALUATE
             
+            print(f"[DEBUG] update_causal_property called for property {property_obj.name}")
+            print(f"[DEBUG] USE_INFLUX_TO_EVALUATE: {USE_INFLUX_TO_EVALUATE}")
+            print(f"[DEBUG] INFLUXDB_TOKEN exists: {bool(INFLUXDB_TOKEN)}")
+            print(f"[DEBUG] property_obj.device_property: {property_obj.device_property}")
+            print(f"[DEBUG] device exists: {property_obj.device_property.device if property_obj.device_property else 'None'}")
+            
             if (USE_INFLUX_TO_EVALUATE and INFLUXDB_TOKEN and 
                 property_obj.device_property and property_obj.device_property.device):
                 response_timestamp = int(time.time() * 1000)
@@ -343,9 +349,13 @@ def update_causal_property(
                     data=data,
                     timeout=0.1
                 )
-                print(f"M2S response timestamp logged for {sensor_id}")
+                print(f"[SUCCESS] M2S response timestamp logged for {sensor_id}: {response_timestamp}")
+            else:
+                print(f"[SKIP] M2S timestamp not logged - conditions not met")
         except Exception as e:
-            print(f"M2S timestamp logging failed: {e}")
+            print(f"[ERROR] M2S timestamp logging failed: {e}")
+            import traceback
+            traceback.print_exc()
         
         return DigitalTwinInstancePropertySchema.from_instance(property_obj)
 

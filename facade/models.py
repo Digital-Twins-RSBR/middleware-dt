@@ -356,8 +356,13 @@ class Property(models.Model):
                 if rpc_type.name == 'WRITE' and self.rpc_write_method:
                     print(f"[{datetime.now().isoformat()}] ⚡ ULTRA-WRITE (try {retry_count+1}): {self.rpc_write_method}={self.get_value()}")
                     
-                    # Write to InfluxDB first (non-blocking)
+                    # M2S TIMESTAMP: Register when middleware SENDS to simulator
                     if retry_count == 0:  # Only on first try
+                        try:
+                            self._write_m2s_sent_timestamp()
+                        except Exception as e:
+                            print(f"[{datetime.now().isoformat()}] ⚠️ M2S InfluxDB: {e}")
+                        
                         try:
                             self._write_influx_fast()
                         except Exception as e:
@@ -408,6 +413,40 @@ class Property(models.Model):
         
         return MockResponse(self)
 
+    def _write_m2s_sent_timestamp(self):
+        """Write M2S sent timestamp to InfluxDB for latency measurement"""
+        try:
+            import time
+            from datetime import datetime
+            
+            if not (USE_INFLUX_TO_EVALUATE and INFLUXDB_TOKEN):
+                print(f"[{datetime.now().isoformat()}] ⚠️ M2S: InfluxDB not configured")
+                return
+            
+            sent_ts = int(time.time() * 1000)
+            sensor_id = self.device.identifier
+            
+            tags = {
+                "sensor": sensor_id, 
+                "source": "middts"
+            }
+            fields = {"sent_timestamp": sent_ts}
+            
+            from facade.utils import format_influx_line
+            data = format_influx_line("latency_measurement", tags, fields, timestamp=sent_ts)
+            
+            import requests
+            requests.post(
+                INFLUXDB_URL,
+                headers={"Authorization": f"Token {INFLUXDB_TOKEN}", "Content-Type": "text/plain"},
+                data=data,
+                timeout=0.5
+            )
+            print(f"[{datetime.now().isoformat()}] 📈 M2S sent_timestamp logged for {sensor_id}")
+        except Exception as e:
+            from datetime import datetime
+            print(f"[{datetime.now().isoformat()}] ❌ M2S timestamp failed: {e}")
+
     def _write_influx_fast(self):
         """Fast InfluxDB write with minimal blocking - focusing on property data only"""
         try:
@@ -446,6 +485,37 @@ class Property(models.Model):
         except Exception as e:
             from datetime import datetime
             print(f"[{datetime.now().isoformat()}] 📈 InfluxDB failed: {e}")
+    
+    def _write_m2s_sent_timestamp(self):
+        """Write M2S sent timestamp when middleware sends RPC to device"""
+        try:
+            import time
+            from datetime import datetime
+            
+            if not (USE_INFLUX_TO_EVALUATE and INFLUXDB_TOKEN):
+                return
+            
+            sent_timestamp = int(time.time() * 1000)
+            sensor_id = self.device.identifier
+            
+            tags = {"sensor": sensor_id, "source": "middts"}
+            fields = {"sent_timestamp": sent_timestamp}
+            
+            from facade.utils import format_influx_line
+            data = format_influx_line("latency_measurement", tags, fields, timestamp=sent_timestamp)
+            
+            import requests
+            requests.post(
+                INFLUXDB_URL,
+                headers={"Authorization": f"Token {INFLUXDB_TOKEN}", "Content-Type": "text/plain"},
+                data=data,
+                timeout=0.5
+            )
+            print(f"[{datetime.now().isoformat()}] 📡 M2S sent_timestamp: {sent_timestamp} for {sensor_id}")
+        except Exception as e:
+            from datetime import datetime
+            print(f"[{datetime.now().isoformat()}] 📡 M2S timestamp failed: {e}")
+    
     
     def get_value(self):
         if self.type == 'Boolean':
