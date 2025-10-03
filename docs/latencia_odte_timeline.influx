@@ -1,0 +1,107 @@
+// Timeline: Evolução Temporal das Latências S2M e M2S
+// Visualização em série temporal das latências para análise de tendências
+// Permite identificar picos, padrões sazonais e degradação de performance
+
+import "experimental"
+
+// S2M Latency Timeline
+s2m_sent = from(bucket: "iot_data")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "device_data")
+  |> filter(fn: (r) => r["source"] == "simulator")
+  |> filter(fn: (r) => r._field == "sent_timestamp")
+  |> map(fn: (r) => ({ r with sent_timestamp: r._value }))
+  |> keep(columns: ["_time", "sensor", "sent_timestamp"])
+
+s2m_received = from(bucket: "iot_data")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "device_data")
+  |> filter(fn: (r) => r["source"] == "middts")
+  |> filter(fn: (r) => r._field == "received_timestamp")
+  |> map(fn: (r) => ({ r with received_timestamp: r._value }))
+  |> keep(columns: ["_time", "sensor", "received_timestamp"])
+
+s2m_timeline = join(tables: {s: s2m_sent, r: s2m_received}, on: ["sensor"])
+  |> map(fn: (r) => ({
+    _time: r._time_r,
+    sensor: r.sensor,
+    direction: "S2M",
+    latencia_ms: float(v: (r.received_timestamp - r.sent_timestamp)),
+    time_diff_ns: int(v: r._time_r) - int(v: r._time_s)
+  }))
+  |> filter(fn: (r) => exists r.sent_timestamp and exists r.received_timestamp)
+  |> filter(fn: (r) => r.latencia_ms >= 0.0 and r.latencia_ms < 1000.0)
+  |> filter(fn: (r) => r.time_diff_ns >= 0 and r.time_diff_ns < 30000000000)
+  |> group(columns: ["sensor", "sent_timestamp"])
+  |> min(column: "latencia_ms")
+  |> group()
+  |> keep(columns: ["_time", "sensor", "latencia_ms", "direction"])
+
+// M2S Latency Timeline
+m2s_sent = from(bucket: "iot_data")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "latency_measurement")
+  |> filter(fn: (r) => r["source"] == "middts")
+  |> filter(fn: (r) => r._field == "sent_timestamp")
+  |> map(fn: (r) => ({ r with sent_timestamp: r._value }))
+  |> keep(columns: ["_time", "sensor", "sent_timestamp"])
+
+m2s_received = from(bucket: "iot_data")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "latency_measurement")
+  |> filter(fn: (r) => r["source"] == "simulator")
+  |> filter(fn: (r) => r._field == "received_timestamp")
+  |> map(fn: (r) => ({ r with received_timestamp: r._value }))
+  |> keep(columns: ["_time", "sensor", "received_timestamp"])
+
+m2s_timeline = join(tables: {s: m2s_sent, r: m2s_received}, on: ["sensor"])
+  |> map(fn: (r) => ({
+    _time: r._time_r,
+    sensor: r.sensor,
+    direction: "M2S",
+    latencia_ms: float(v: (r.received_timestamp - r.sent_timestamp)),
+    time_diff_ns: int(v: r._time_r) - int(v: r._time_s)
+  }))
+  |> filter(fn: (r) => exists r.sent_timestamp and exists r.received_timestamp)
+  |> filter(fn: (r) => r.latencia_ms >= 0.0 and r.latencia_ms < 1000.0)
+  |> filter(fn: (r) => r.time_diff_ns >= 0 and r.time_diff_ns < 30000000000)
+  |> group(columns: ["sensor", "sent_timestamp"])
+  |> min(column: "latencia_ms")
+  |> group()
+  |> keep(columns: ["_time", "sensor", "latencia_ms", "direction"])
+
+// Combined Timeline
+combined_timeline = union(tables: [s2m_timeline, m2s_timeline])
+  |> sort(columns: ["_time"])
+
+// Raw Timeline Data
+combined_timeline
+  |> yield(name: "latencia_timeline_raw")
+
+// Aggregated Timeline (1-minute windows)
+combined_timeline
+  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
+  |> yield(name: "latencia_timeline_1min_avg")
+
+// Moving Average (5-minute window)
+combined_timeline
+  |> movingAverage(n: 5)
+  |> yield(name: "latencia_timeline_moving_avg")
+
+// Peak Detection (P95 per minute)
+combined_timeline
+  |> aggregateWindow(every: 1m, fn: (column, tables=<-) => tables |> quantile(column: column, q: 0.95), createEmpty: false)
+  |> yield(name: "latencia_timeline_p95")
+
+// URLLC Compliance Check (percentage below 1ms threshold)
+urllc_compliance = combined_timeline
+  |> map(fn: (r) => ({ r with urllc_compliant: if r.latencia_ms <= 1.0 then 1.0 else 0.0 }))
+  |> aggregateWindow(every: 1m, fn: mean, column: "urllc_compliant", createEmpty: false)
+  |> map(fn: (r) => ({ r with compliance_percentage: r.urllc_compliant * 100.0 }))
+  |> yield(name: "urllc_compliance_timeline")
+
+// Direction Comparison (side-by-side stats)
+direction_stats = combined_timeline
+  |> group(columns: ["direction"])
+  |> aggregateWindow(every: 1m, fn: mean, createEmpty: false)
+  |> yield(name: "latencia_direction_comparison")

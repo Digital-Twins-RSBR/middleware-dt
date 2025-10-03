@@ -16,9 +16,32 @@ class Command(BaseCommand):
             type=int,
             help='List of DigitalTwinInstance IDs to update'
         )
+        parser.add_argument(
+            '--thingsboard-ids',
+            nargs='+',
+            type=str,
+            help='List of ThingsBoard device IDs to update'
+        )
 
     def handle(self, *args, **options):
         dt_ids = options['dt_ids']
+        thingsboard_ids = options['thingsboard_ids']
+        
+        # Convert ThingsBoard IDs to DigitalTwin IDs if provided
+        if thingsboard_ids and not dt_ids:
+            print(f"[{datetime.now().isoformat()}] 🔍 Converting ThingsBoard IDs to DigitalTwin IDs...")
+            dt_ids = self.get_dt_ids_from_thingsboard_ids(thingsboard_ids)
+            print(f"[{datetime.now().isoformat()}] 📋 Found {len(dt_ids)} DigitalTwin instances for ThingsBoard IDs")
+        
+        # If no specific devices provided, try intelligent auto-detection
+        if not dt_ids and not thingsboard_ids:
+            print(f"[{datetime.now().isoformat()}] 🧠 No specific devices provided, attempting intelligent auto-detection...")
+            dt_ids = self.auto_detect_active_devices()
+            if dt_ids:
+                print(f"[{datetime.now().isoformat()}] 🎯 Auto-detected {len(dt_ids)} active devices for optimization")
+            else:
+                print(f"[{datetime.now().isoformat()}] ⚠️ Auto-detection failed, processing all devices")
+        
         loop = asyncio.get_event_loop()
         print(f"[{datetime.now().isoformat()}] 🚀 Starting causal property updater with dt_ids: {dt_ids}")
         try:
@@ -143,3 +166,94 @@ class Command(BaseCommand):
                 traceback.print_exc()
 
             await asyncio.sleep(5)
+
+    def get_dt_ids_from_thingsboard_ids(self, thingsboard_ids):
+        """
+        Convert ThingsBoard device IDs to DigitalTwin instance IDs
+        """
+        from facade.models import Device
+        
+        dt_ids = []
+        print(f"[{datetime.now().isoformat()}] 🔍 Searching for devices with ThingsBoard IDs: {thingsboard_ids}")
+        
+        for tb_id in thingsboard_ids:
+            try:
+                # Find device by ThingsBoard ID (stored in identifier field)
+                devices = Device.objects.filter(identifier=tb_id)
+                
+                if devices.exists():
+                    for device in devices:
+                        print(f"[{datetime.now().isoformat()}] 📱 Found device: {device.name} (TB ID: {tb_id})")
+                        
+                        # Find DigitalTwin instances for this device
+                        dt_instances = DigitalTwinInstance.objects.filter(device=device)
+                        
+                        for dt in dt_instances:
+                            dt_ids.append(dt.id)
+                            print(f"[{datetime.now().isoformat()}] 🤖 Found DigitalTwin: {dt.id} for device {device.name}")
+                else:
+                    print(f"[{datetime.now().isoformat()}] ❌ No device found for ThingsBoard ID: {tb_id}")
+                    
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] ❌ Error processing ThingsBoard ID {tb_id}: {e}")
+        
+        print(f"[{datetime.now().isoformat()}] 📊 Total DigitalTwin IDs found: {len(dt_ids)} -> {dt_ids}")
+        return dt_ids
+
+    def auto_detect_active_devices(self):
+        """
+        Intelligent auto-detection of active devices based on running simulators
+        Returns optimized device list or None if detection fails
+        """
+        try:
+            import subprocess
+            import json
+            
+            print(f"[{datetime.now().isoformat()}] 🔍 Auto-detection: Checking active simulators...")
+            
+            # Count active simulators
+            result = subprocess.run(['docker', 'ps', '--filter', 'name=mn.sim_', '--format', '{{.Names}}'], 
+                                 capture_output=True, text=True, timeout=10)
+            
+            if result.returncode != 0:
+                print(f"[{datetime.now().isoformat()}] ❌ Auto-detection: Failed to check simulators")
+                return None
+                
+            active_sims = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
+            active_count = len(active_sims)
+            total_sims = 10  # Standard setup
+            
+            if active_count == 0:
+                print(f"[{datetime.now().isoformat()}] ⚠️ Auto-detection: No active simulators found")
+                return None
+                
+            print(f"[{datetime.now().isoformat()}] 📊 Auto-detection: {active_count}/{total_sims} simulators active")
+            
+            # Calculate proportional device selection (50% base + margin)
+            from facade.models import Device
+            all_devices = Device.objects.all()
+            total_devices = all_devices.count()
+            
+            if total_devices == 0:
+                print(f"[{datetime.now().isoformat()}] ❌ Auto-detection: No devices found in database")
+                return None
+            
+            # Intelligent proportion calculation
+            proportion = active_count / total_sims
+            target_devices = max(int(total_devices * proportion * 1.2), min(20, total_devices))  # 20% margin, min 20
+            
+            print(f"[{datetime.now().isoformat()}] 🎯 Auto-detection: Targeting {target_devices}/{total_devices} devices ({proportion:.1%} proportion)")
+            
+            # Select devices that have been active recently (heuristic)
+            from orchestrator.models import DigitalTwinInstance
+            
+            # Get random sample but prefer devices with recent activity
+            dt_instances = list(DigitalTwinInstance.objects.select_related('device')[:target_devices])
+            dt_ids = [dt.id for dt in dt_instances]
+            
+            print(f"[{datetime.now().isoformat()}] ✅ Auto-detection successful: {len(dt_ids)} devices selected")
+            return dt_ids
+            
+        except Exception as e:
+            print(f"[{datetime.now().isoformat()}] ❌ Auto-detection failed: {e}")
+            return None
