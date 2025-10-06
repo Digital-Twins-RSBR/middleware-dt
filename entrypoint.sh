@@ -48,7 +48,7 @@ export SECRET_KEY
 # Aguarda Postgres ficar acessível (multi-host fallback)
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 PRIMARY_HOST="${POSTGRES_HOST:-}"
-FALLBACK_HOSTS="10.0.0.10 10.10.2.10"
+FALLBACK_HOSTS="10.0.1.10 10.0.0.10"
 HOST_CANDIDATES="${PRIMARY_HOST} ${FALLBACK_HOSTS}"
 echo "[db-wait] Interfaces disponíveis:"; ip -brief addr || true
 echo "[db-wait] Testando hosts candidatos: ${HOST_CANDIDATES}"
@@ -197,7 +197,7 @@ LISTENER_LOG="/middleware-dt/logs/listen_gateway.log"
 
 START_LISTENER_AFTER_TB="${START_LISTENER_AFTER_TB:-1}"
 START_LISTENER_TIMEOUT="${START_LISTENER_TIMEOUT:-300}"
-TB_HOST="${TB_HOST:-${THINGSBOARD_HOST:-10.0.0.11}}"
+TB_HOST="${TB_HOST:-${THINGSBOARD_HOST:-10.0.0.2}}"
 TB_PORT="${TB_PORT:-8080}"
 
 if [ "$START_LISTENER_AFTER_TB" = "1" ]; then

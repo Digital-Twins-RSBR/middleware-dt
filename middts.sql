@@ -778,7 +778,7 @@ COPY public.core_dtdlparserclient (id, name, url, active) FROM stdin;
 --
 
 COPY public.core_gatewayiot (id, name, url, username, password) FROM stdin;
-1	Thingsboard Containernet	http://10.0.0.11:8000	tenant@thingsboard.org	tenant
+1	Thingsboard Containernet	http://10.0.0.2:8080	tenant@thingsboard.org	tenant
 \.
 
 
