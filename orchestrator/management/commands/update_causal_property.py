@@ -22,25 +22,116 @@ class Command(BaseCommand):
             type=str,
             help='List of ThingsBoard device IDs to update'
         )
+        parser.add_argument(
+            '--thingsboard-ids-file',
+            type=str,
+            help='Path to a file containing ThingsBoard IDs (one per line)'
+        )
+        parser.add_argument(
+            '--house-names',
+            nargs='+',
+            type=str,
+            help='List of house names (e.g. "House 1") to filter devices by and update'
+        )
+        parser.add_argument(
+            '--house-names-file',
+            type=str,
+            help='Path to a file containing house names (one per line)'
+        )
 
     def handle(self, *args, **options):
         dt_ids = options['dt_ids']
         thingsboard_ids = options['thingsboard_ids']
+        house_names = options.get('house_names')
+        tb_ids_file = options.get('thingsboard_ids_file')
+        house_names_file = options.get('house_names_file')
+
+        # If file args provided, read them and populate lists (one per line)
+        if tb_ids_file and (not thingsboard_ids):
+            try:
+                with open(tb_ids_file, 'r') as f:
+                    thingsboard_ids = [l.strip() for l in f if l.strip()]
+                print(f"[{datetime.now().isoformat()}] 🔍 Loaded {len(thingsboard_ids)} ThingsBoard IDs from file {tb_ids_file}")
+                # Structured summary for orchestration/parsability
+                print(f"[{datetime.now().isoformat()}] SUMMARY_SELECTED_THINGSBOARD_FILE={tb_ids_file} UNIQUE_TARGETS={len(set(thingsboard_ids))} SAMPLE_IDS={thingsboard_ids[:10]}")
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] ❌ Error reading thingsboard ids file {tb_ids_file}: {e}")
+
+        if house_names_file and (not house_names):
+            try:
+                with open(house_names_file, 'r') as f:
+                    house_names = [l.strip() for l in f if l.strip()]
+                print(f"[{datetime.now().isoformat()}] 🔍 Loaded {len(house_names)} house names from file {house_names_file}")
+                print(f"[{datetime.now().isoformat()}] SUMMARY_HOUSE_NAMES_FILE={house_names_file} UNIQUE_HOUSES={len(set(house_names))} SAMPLE_HOUSES={house_names[:10]}")
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] ❌ Error reading house names file {house_names_file}: {e}")
+
+        # If house names provided, resolve to device identifiers (thingsboard ids)
+        # and/or digital twin ids via ORM queries
+        if house_names and not dt_ids and not thingsboard_ids:
+            print(f"[{datetime.now().isoformat()}] 🔍 Resolving house names to devices: {house_names}")
+            try:
+                from facade.models import Device
+                # Collect devices that match any of the provided house name tokens either
+                # in the human-readable device name or in metadata (labels from ThingsBoard)
+                matched_devices = []
+                for hn in house_names:
+                    qname = Device.objects.filter(name__icontains=hn)
+                    qmeta = Device.objects.filter(metadata__icontains=hn)
+                    for d in qname.union(qmeta):
+                        matched_devices.append(d)
+
+                # Deduplicate
+                matched_devices = list({d.id: d for d in matched_devices}.values())
+
+                if matched_devices:
+                    print(f"[{datetime.now().isoformat()}] 📋 Found {len(matched_devices)} devices for houses: {[d.name for d in matched_devices]}")
+                    # Emit structured mapping info
+                    tb_sample = [d.identifier for d in matched_devices if d.identifier][:10]
+                    print(f"[{datetime.now().isoformat()}] SUMMARY_MATCHED_DEVICES={len(matched_devices)} SAMPLE_TB_IDS={tb_sample}")
+                    # Set thingsboard_ids and dt_ids accordingly
+                    thingsboard_ids = [d.identifier for d in matched_devices if d.identifier]
+                    # DigitalTwinInstance does not have a direct 'device' FK. Map via the
+                    # DigitalTwinInstanceProperty -> device_property -> device relationship
+                    dt_qs = DigitalTwinInstance.objects.filter(
+                        digitaltwininstanceproperty__device_property__device__in=matched_devices
+                    ).distinct()
+                    dt_ids = list(dt_qs.values_list('id', flat=True))
+                    print(f"[{datetime.now().isoformat()}] 🔁 Mapped to {len(thingsboard_ids)} ThingsBoard IDs and {len(dt_ids)} DigitalTwin IDs")
+                    print(f"[{datetime.now().isoformat()}] SUMMARY_RESOLVED_DT_IDS={dt_ids[:50]} TOTAL_RESOLVED_DT_IDS={len(dt_ids)}")
+                else:
+                    print(f"[{datetime.now().isoformat()}] ❌ No devices matched the provided house names")
+            except Exception as e:
+                print(f"[{datetime.now().isoformat()}] ❌ Error while resolving house names: {e}")
         
         # Convert ThingsBoard IDs to DigitalTwin IDs if provided
         if thingsboard_ids and not dt_ids:
             print(f"[{datetime.now().isoformat()}] 🔍 Converting ThingsBoard IDs to DigitalTwin IDs...")
             dt_ids = self.get_dt_ids_from_thingsboard_ids(thingsboard_ids)
             print(f"[{datetime.now().isoformat()}] 📋 Found {len(dt_ids)} DigitalTwin instances for ThingsBoard IDs")
+            print(f"[{datetime.now().isoformat()}] SUMMARY_CONVERTED_DT_IDS={dt_ids[:50]} TOTAL_CONVERTED={len(dt_ids)}")
         
-        # If no specific devices provided, try intelligent auto-detection
-        if not dt_ids and not thingsboard_ids:
-            print(f"[{datetime.now().isoformat()}] 🧠 No specific devices provided, attempting intelligent auto-detection...")
-            dt_ids = self.auto_detect_active_devices()
-            if dt_ids:
-                print(f"[{datetime.now().isoformat()}] 🎯 Auto-detected {len(dt_ids)} active devices for optimization")
-            else:
-                print(f"[{datetime.now().isoformat()}] ⚠️ Auto-detection failed, processing all devices")
+        # If no specific devices provided, do NOT attempt internal auto-detection here.
+        # The orchestration layer (e.g. odte-full) should detect active simulators,
+        # map them to ThingsBoard IDs / DigitalTwin IDs and invoke this command
+        # with --thingsboard-ids or --dt-ids. If no IDs are provided we'll process
+        # all devices (legacy behavior). However, when the orchestrator provided
+        # any target-related argument (thingsboard ids, house names or dt ids),
+        # we must NOT fallback to processing all devices. Doing so breaks
+        # availability/reliability measurement and defeats orchestration intent.
+        orchestrator_provided = bool(
+            thingsboard_ids or tb_ids_file or house_names or house_names_file or dt_ids
+        )
+
+        if orchestrator_provided and not dt_ids:
+            # Orchestrator provided targets but we couldn't resolve any DTs.
+            # Fail fast so operator can fix the target list; do not process ALL devices.
+            print(f"[{datetime.now().isoformat()}] ❌ Orchestrator provided target arguments but no DigitalTwin IDs were resolved. Aborting to avoid processing ALL devices.")
+            return
+
+        if not orchestrator_provided and not dt_ids and not thingsboard_ids:
+            # Legacy fallback only when no orchestrator-provided targets at all.
+            print(f"[{datetime.now().isoformat()}] 🧠 No specific devices provided.\n    NOTE: orchestration should pass --thingsboard-ids or --dt-ids.\n    Falling back to processing ALL devices (this may be slow).")
         
         loop = asyncio.get_event_loop()
         print(f"[{datetime.now().isoformat()}] 🚀 Starting causal property updater with dt_ids: {dt_ids}")
@@ -119,13 +210,34 @@ class Command(BaseCommand):
                                 try:
                                     await sync_to_async(lambda: p.save(propagate_to_device=True))()
                                     propagate_time = time.time() - propagate_start
+                                    # Try to get device identifier and dt id for structured logging
+                                    try:
+                                        device_identifier = await sync_to_async(lambda pp: getattr(getattr(pp, 'device_property', None).device, 'identifier', None))(p)
+                                    except Exception:
+                                        device_identifier = None
+                                    try:
+                                        dt_id = await sync_to_async(lambda pp: getattr(pp, 'dtinstance', None).id)(p)
+                                    except Exception:
+                                        dt_id = None
                                     print(f"[{datetime.now().isoformat()}] ✅ Propagation completed for '{prop_name}' in {propagate_time:.3f}s")
-                                    return propagate_time
+                                    print(f"[{datetime.now().isoformat()}] RPC_RESULT success=1 tb_id={device_identifier} dt_id={dt_id} prop={prop_name} time={propagate_time:.6f}")
+                                    return (True, propagate_time)
                                 except Exception as e:
                                     propagate_time = time.time() - propagate_start
                                     # Non-fatal: log to stdout so we have visibility in container logs
+                                    try:
+                                        device_identifier = await sync_to_async(lambda pp: getattr(getattr(pp, 'device_property', None).device, 'identifier', None))(p)
+                                    except Exception:
+                                        device_identifier = None
+                                    try:
+                                        dt_id = await sync_to_async(lambda pp: getattr(pp, 'dtinstance', None).id)(p)
+                                    except Exception:
+                                        dt_id = None
                                     print(f"[{datetime.now().isoformat()}] ❌ Error propagating causal property '{prop_name}' after {propagate_time:.3f}s: {e}")
-                                    return propagate_time
+                                    # sanitize error for single-line logging
+                                    err_str = str(e).replace('\n', ' ').replace('"', '\\"')
+                                    print(f"[{datetime.now().isoformat()}] RPC_RESULT success=0 tb_id={device_identifier} dt_id={dt_id} prop={prop_name} time={propagate_time:.6f} error={err_str}")
+                                    return (False, propagate_time)
 
                             # Schedule background propagation and continue immediately
                             try:
@@ -185,10 +297,14 @@ class Command(BaseCommand):
                     for device in devices:
                         print(f"[{datetime.now().isoformat()}] 📱 Found device: {device.name} (TB ID: {tb_id})")
                         
-                        # Find DigitalTwin instances for this device
-                        dt_instances = DigitalTwinInstance.objects.filter(device=device)
-                        
-                        for dt in dt_instances:
+                        # Find DigitalTwin instances related to this device. There is no
+                        # direct FK 'device' on DigitalTwinInstance in this schema; map
+                        # via the DigitalTwinInstanceProperty -> device_property -> device
+                        # relationship to find associated instances.
+                        dt_qs = DigitalTwinInstance.objects.filter(
+                            digitaltwininstanceproperty__device_property__device=device
+                        ).distinct()
+                        for dt in dt_qs:
                             dt_ids.append(dt.id)
                             print(f"[{datetime.now().isoformat()}] 🤖 Found DigitalTwin: {dt.id} for device {device.name}")
                 else:
@@ -200,60 +316,7 @@ class Command(BaseCommand):
         print(f"[{datetime.now().isoformat()}] 📊 Total DigitalTwin IDs found: {len(dt_ids)} -> {dt_ids}")
         return dt_ids
 
-    def auto_detect_active_devices(self):
-        """
-        Intelligent auto-detection of active devices based on running simulators
-        Returns optimized device list or None if detection fails
-        """
-        try:
-            import subprocess
-            import json
-            
-            print(f"[{datetime.now().isoformat()}] 🔍 Auto-detection: Checking active simulators...")
-            
-            # Count active simulators
-            result = subprocess.run(['docker', 'ps', '--filter', 'name=mn.sim_', '--format', '{{.Names}}'], 
-                                 capture_output=True, text=True, timeout=10)
-            
-            if result.returncode != 0:
-                print(f"[{datetime.now().isoformat()}] ❌ Auto-detection: Failed to check simulators")
-                return None
-                
-            active_sims = [line.strip() for line in result.stdout.strip().split('\n') if line.strip()]
-            active_count = len(active_sims)
-            total_sims = 10  # Standard setup
-            
-            if active_count == 0:
-                print(f"[{datetime.now().isoformat()}] ⚠️ Auto-detection: No active simulators found")
-                return None
-                
-            print(f"[{datetime.now().isoformat()}] 📊 Auto-detection: {active_count}/{total_sims} simulators active")
-            
-            # Calculate proportional device selection (50% base + margin)
-            from facade.models import Device
-            all_devices = Device.objects.all()
-            total_devices = all_devices.count()
-            
-            if total_devices == 0:
-                print(f"[{datetime.now().isoformat()}] ❌ Auto-detection: No devices found in database")
-                return None
-            
-            # Intelligent proportion calculation
-            proportion = active_count / total_sims
-            target_devices = max(int(total_devices * proportion * 1.2), min(20, total_devices))  # 20% margin, min 20
-            
-            print(f"[{datetime.now().isoformat()}] 🎯 Auto-detection: Targeting {target_devices}/{total_devices} devices ({proportion:.1%} proportion)")
-            
-            # Select devices that have been active recently (heuristic)
-            from orchestrator.models import DigitalTwinInstance
-            
-            # Get random sample but prefer devices with recent activity
-            dt_instances = list(DigitalTwinInstance.objects.select_related('device')[:target_devices])
-            dt_ids = [dt.id for dt in dt_instances]
-            
-            print(f"[{datetime.now().isoformat()}] ✅ Auto-detection successful: {len(dt_ids)} devices selected")
-            return dt_ids
-            
-        except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ Auto-detection failed: {e}")
-            return None
+    # NOTE: auto-detection logic removed. Orchestration should call this command
+    # with explicit --thingsboard-ids or --dt-ids. Keeping auto-detection here was
+    # causing ambiguity and duplicated responsibility between orchestrator and
+    # the update command.
