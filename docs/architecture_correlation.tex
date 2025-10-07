@@ -1,0 +1,107 @@
+% architecture_correlation.tex
+% architecture_correlation.tex
+% Continuous narrative correlating the technology-agnostic architecture to the repository implementation
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{geometry}
+\geometry{margin=1in}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{parskip}
+\lstdefinestyle{pythonstyle}{language=Python,basicstyle=\ttfamily\small,breaklines=true,frame=single}
+\title{Correlation Between Generic Architecture and Implementation}
+\author{Generated from codebase analysis}
+\date{2025-10-07}
+\begin{document}
+\maketitle
+This document provides a continuous narrative that maps the previously specified, technology-agnostic architecture to the concrete implementation present in the repository. The goal is to make explicit how each conceptual component is realized in code, which files and patterns implement the responsibilities described in the generic design, and where to look when evolving or testing the system. The narrative intentionally avoids sectioning and reads as a single explanatory text.
+
+The Configuration and Authentication service in the generic architecture is implemented primarily in the repository's `core` module. In the codebase, the models `GatewayIOT` and `DTDLParserClient` (found in `core/models.py`) correspond directly to the gateway and parser client records suggested in the specification. The `core/api.py` file exposes small endpoints and utility functions; for example, the `get_jwt_token_gateway` helper encapsulates the flow of using stored gateway credentials to request a JWT token from an external ThingsBoard instance. This helper is the concrete realization of the generic `GetToken(gateway_id)` operation mentioned in the specification. The implementation also includes schema definitions (`core/schemas.py`) and minimal authentication endpoints, which reflect the administrative and token-related APIs the specification recommends. Secret handling in this implementation is currently simple (credentials are stored as model fields) so a recommended evolution is to integrate a secrets manager or encrypted-at-rest fields as noted in the design notes.
+
+\begin{lstlisting}[style=pythonstyle,caption={get_jwt_token_gateway (core/api.py) - simplified}]
+@router.get("/gatewayiot/{gateway_id}/jwt/", response={200: dict, 400: dict})
+def get_jwt_token_gateway(request, gateway_id: int):
+	gateway = get_object_or_404(GatewayIOT, id=gateway_id)
+	url = f"{gateway.url}/api/auth/login"
+	payload = {"username": gateway.username, "password": gateway.password}
+	response = requests.post(url, headers={"Content-Type": "application/json"}, data=json.dumps(payload))
+	if response.status_code == 200:
+		token = response.json().get("token")
+		return {"token": token}, 200
+	return {"error": f"Error obtaining JWT token: {response.status_code}"}, 400
+\end{lstlisting}
+
+The Device Facade maps to the `facade` module in the repository. This module holds the local device models (`Device`, `DeviceType`, `Property`) in `facade/models.py` and the request flows in `facade/api.py` and `facade/views.py`. The facade implements device discovery by calling the gateway endpoints — for the ThingsBoard example, `facade/views.py` invokes `core.get_jwt_token_gateway` to obtain a token and then queries `/api/tenant/devices`. Bulk synchronization and idempotent creation occur in the discovery flow, matching the specification's recommendation for bulk writes and idempotency. The `Property` model implements the RPC behavior and contains the `call_rpc` method which obtains a JWT, prepares RPC payloads, and performs two-way RPCs against the gateway using a session abstraction. The `facade/utils.py` file contains the `format_influx_line` helper and a session manager implementation `get_session_for_gateway`, both of which map to the Telemetry and Session manager responsibilities, respectively. The implementation opts for aggressive timeouts and an ultra-low-latency posture in `call_rpc` and in the session manager; this concretely realizes the specification's note that facade should support configurable latency profiles and graceful fallbacks (mock responses) when gateways are unreachable.
+
+\begin{lstlisting}[style=pythonstyle,caption={Property.call_rpc (facade/models.py) - simplified}]
+def call_rpc(self, rpc_type: RPCCallTypes):
+	from facade.api import get_jwt_token_gateway
+	response, status_code = get_jwt_token_gateway(None, self.device.gateway.id)
+	if status_code != 200:
+		return self._create_mock_response()
+	token = response['token']
+	urltwoway = f"{self.device.gateway.url}/api/rpc/twoway/{self.device.identifier}"
+	session = get_session_for_gateway(self.device.gateway.id)
+	try:
+		response = session.post(urltwoway, json={"method": self.rpc_write_method, "params": self.get_value()},
+								headers={"X-Authorization": f"Bearer {token}"}, timeout=0.1)
+		return response
+	except Exception:
+		return self._create_mock_response()
+\end{lstlisting}
+
+\begin{lstlisting}[style=pythonstyle,caption={format_influx_line and get_session_for_gateway (facade/utils.py) - sketches}]
+def format_influx_line(measurement, tags: dict, fields: dict, timestamp=None):
+	# escape tags and format field values (booleans/ints -> floats)
+	return f"{measurement},{...} {...} {timestamp or ''}"
+
+def get_session_for_gateway(gateway_id: int):
+	# returns a configured requests.Session with adapters, timeouts and pooling
+	return session
+\end{lstlisting}
+
+The Model Orchestrator corresponds to the `orchestrator` module. The `DTDLModel` class in `orchestrator/models.py` implements storage of the original model JSON and the parsed representation. The method `create_parsed_specification()` follows the specified pattern of delegating to an external parser: it selects an active `DTDLParserClient` (stored in `core`) and POSTs the model spec to the parser endpoint. After parsing, `create_dtdl_models()` iterates the returned `modelElements` and `modelRelationships` to create `ModelElement` and `ModelRelationship` rows in the database — this code realizes the specification's parsed-model storage and element materialization responsibilities. The code also includes a management command (`orchestrator/management/commands/replicate_and_create_instances.py`) that demonstrates hierarchical instance creation, which is a concrete example of the `CreateInstance` behavior described in the architecture.
+
+\begin{lstlisting}[style=pythonstyle,caption={DTDLModel.create_parsed_specification (orchestrator/models.py) - simplified}]
+def create_parsed_specification(self):
+	parser_client = DTDLParserClient.get_active()
+	parser_url = parser_client.url
+	payload = {"id": self.specification.get('@id'), "specification": self.specification}
+	response = requests.post(parser_url, json=payload)
+	response.raise_for_status()
+	self.parsed_specification = response.json()
+	return self
+\end{lstlisting}
+
+A core value in the specification was the ability to bind digital twin properties to real device properties. The repository contains an explicit implementation of this in `DigitalTwinInstanceProperty.suggest_device_binding()` (in `orchestrator/models.py`). The code builds textual contexts from the DT hierarchy and uses `SentenceTransformer('all-MiniLM-L6-v2')` to encode DT text and candidate device/property texts, then computes cosine similarity via `util.cos_sim` to select a best match. The implementation applies a conservative threshold (0.60) to accept an automated binding. The listing below shows the core scoring loop used to compute similarity and choose the best candidate.
+
+\begin{lstlisting}[style=pythonstyle,caption={Semantic binding loop (orchestrator/models.py) - core scoring loop}]
+dt_embedding = model.encode(dt_text, convert_to_tensor=True)
+best_score = 0.0
+best_match = None
+for candidate in Property.objects.filter(digitaltwininstanceproperty__isnull=True):
+	candidate_text = f"{candidate.device.name} {candidate.device.type.name if candidate.device.type else ''} {candidate.name} {candidate.type}"
+	device_embedding = model.encode(candidate_text, convert_to_tensor=True)
+	score = float(util.cos_sim(dt_embedding, device_embedding)[0][0])
+	if score > best_score:
+		best_match = candidate
+		best_score = score
+if best_match and best_score >= 0.60:
+	self.device_property = best_match
+\end{lstlisting}
+
+The Session and Connection Manager is implemented as a set of utilities in `facade/utils.py`. The repository provides both a URLLC-optimized session manager and a local singleton session manager, using `requests.Session` adapters configured with pool sizes, retries, and timeouts. The `get_session_for_gateway` function is the practical realization of the `GetSession(gateway_id)` interface. This implementation also contains a Redis-backed coordination idea (attempted connection and fallback) to manage session sharing across processes — an instantiation of the specification's note about global coordination when multiple processes may contact the same gateway.
+
+Telemetry and event sink responsibilities described in the specification are mapped to code that writes InfluxDB line-protocol payloads in `facade/models.py` and `facade/utils.py`. The `Property.write_influx()` method constructs fields and tags and posts to the configured Influx write endpoint. Inactivity events and other monitoring points are built with the `format_influx_line` helper to ensure consistent formatting. The code follows the specification's recommendation for best-effort telemetry: failures do not break critical RPC or control flows; telemetry writes are logged and de-emphasized relative to control-plane operations.
+
+The newly added DT Gateway (API Gateway) concept maps to an architectural layer that is not yet fully realized as a single module in the repository, but the responsibilities are partially implemented across existing modules. For example, `facade/api.py` and `core/api.py` expose endpoints that could be proxied by an external gateway. The repository does not contain a dedicated gateway binary; instead, the code exposes internal APIs (Ninja/REST endpoints) that follow the suggested `DiscoverDevices`, `CallRPC`, `ParseModel`, and `CreateInstance` patterns. To concretely realize the DT Gateway as specified, an organization could deploy a stateless API gateway (Envoy, Kong, or custom proxy) that fronts the Django/Ninja endpoints and adds cross-cutting policies: authentication, rate-limiting, routing, aggregation and caching. The current codebase provides the building blocks the gateway would orchestrate; implementing the gateway would primarily involve configuration and deployment (proxy configuration, authentication integration), and optionally adding a small wrapper service for endpoint aggregation (for example, a `GET /v1/dt/instances/{id}` aggregator that calls Orchestrator for the instance, Facade for device bindings and Telemetry for recent points).
+
+Cross-cutting concerns described in the specification are partly instrumented in the implementation. The code contains rich logging around property save flows and RPC timings (prints and debug logs in `facade/models.py` and `orchestrator/models.py`), which supports the observability recommendations. Retry and timeout policies are present in session adapters and in `Property.call_rpc()`, aligning with the reliability guidance in the specification. Security and secret-management are acknowledged in comments and design notes, but the implementation currently stores credentials in model fields; the specification recommends integrating a secrets manager or encrypted storage as a next step.
+
+In short, the repository realizes the generic architecture in a straightforward manner: `core` implements configuration and token helpers, `facade` implements the device and RPC adapters (including telemetry helpers and session management), and `orchestrator` implements model parsing, instance materialization and semantic binding. The DT Gateway remains primarily an operational/deployment concern (API surfacing and cross-cutting policies) rather than a large code artifact in the repo; however, the repository's internal APIs are organized so the gateway can be added without refactoring internal logic. The clear separation between configuration, device integration and model orchestration in code mirrors the specification's component boundaries and simplifies applying the suggested improvements: secret management, a human-in-the-loop binding approval UI, and a small aggregation service optionally exposed via the DT Gateway.
+
+\end{document}

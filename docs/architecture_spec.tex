@@ -1,0 +1,210 @@
+% architecture_spec.tex
+% Technology-agnostic architecture specification for Digital Twins Middleware
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{geometry}
+\geometry{margin=1in}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{listings}
+\usepackage{xcolor}
+\title{Architecture Specification: Technology-Agnostic}
+\author{Generated from codebase analysis}
+\date{2025-10-03}
+
+\begin{document}
+\maketitle
+\begin{abstract}
+This document provides a technology-agnostic architecture specification for a middleware that mediates between physical IoT gateways and digital twin models. It describes components, interfaces, data flows and cross-cutting concerns in detail so that implementers can adapt the design to their chosen stack.
+\end{abstract}
+
+\section{Purpose and scope}
+This specification describes a technology-agnostic architecture for a middleware that mediates between physical IoT gateways and digital twin models. The goal is to describe conceptual components, their responsibilities, interactions, data flows, and non-functional considerations in sufficient detail that the architecture can be implemented using different technology stacks.
+
+\section{Goals and non-goals}
+\subsection{Goals}
+\begin{itemize}
+  \item Provide modular separation: configuration/authn, device integration, model orchestration.
+  \item Support synchronous and asynchronous patterns for latency and reliability balance.
+  \item Enable automatic mapping between DT properties and physical device properties using pluggable techniques.
+  \item Support different persistence backends and gateway protocols.
+\end{itemize}
+
+\subsection{Non-goals}
+\begin{itemize}
+  \item Avoid prescribing specific libraries or languages.
+  \item Do not enumerate every database column; provide examples instead.
+\end{itemize}
+
+\section{Conceptual Components}
+The architecture decomposes into six conceptual components:
+\begin{enumerate}
+  \item DT Gateway (API gateway for the middleware)
+  \item Configuration \& Auth Service (``core'')
+  \item Device Facade (``facade'')
+  \item Model Orchestrator (``orchestrator'')
+  \item Session \& Connection Manager (shared utility)
+  \item Telemetry \& Events Sink
+\end{enumerate}
+
+\subsection{Configuration \& Auth Service}
+\paragraph{Purpose}
+Centralize runtime configuration for external gateways and parser services, and provide lightweight authentication helpers for internal use.
+
+\paragraph{Responsibilities}
+Persist gateway configuration, provide an administrative API, and offer a `GetToken(gateway_id)` operation returning short-lived credentials.
+
+\paragraph{Design notes}
+Store secrets in encrypted storage or secret manager. Provide token caching with TTL and safe error handling.
+
+\subsection{Device Facade}
+\paragraph{Purpose}
+Encapsulate integration with gateways, model devices locally, and expose RPC/telemetry operations.
+
+\paragraph{Responsibilities}
+\begin{itemize}
+  \item Device discovery and local synchronization.
+  \item RPC calls to devices with timeout and fallback.
+  \item Telemetry formatting and publish to the sink.
+  \item Expose an API for higher layers to query devices and call RPCs.
+\end{itemize}
+
+\paragraph{Design notes}
+Support configurable timeout profiles and bulk operations for discovery. Provide idempotent upserts for DB synchronization.
+
+\subsection{Model Orchestrator}
+\paragraph{Purpose}
+Manage digital twin models and instances, perform parsing orchestration, and link DT properties to devices.
+
+\paragraph{Responsibilities}
+\begin{itemize}
+  \item Store model specs and parsed forms.
+  \item Materialize hierarchical instances.
+  \item Provide pluggable binding strategies (rule/ML/ontology).
+  \item Propagate causal DT changes to devices (sync or async).
+\end{itemize}
+
+\paragraph{Design notes}
+Offer human-in-the-loop approval for bindings and choose a consistency/propagation model per operation.
+
+\subsection{Session \& Connection Manager}
+\paragraph{Purpose}
+Optimize and coordinate sessions to external gateways, providing pooled or singleton sessions and cross-process coordination if required.
+
+\paragraph{Design notes}
+For URLLC use-cases, set aggressive timeouts and small pools; for throughput-focused scenarios, use larger pools with longer keep-alives.
+
+\subsection{Telemetry \& Events Sink}
+\paragraph{Purpose}
+Persist telemetry, inactivity events and application traces. Support query/aggregation for monitoring.
+
+\paragraph{Design notes}
+Prefer a time-series database for telemetry (InfluxDB/Timescale/etc.) and an event/log store for application events. Use batching and asynchronous writes where appropriate.
+
+\subsection{DT Gateway}
+\paragraph{Purpose}
+Provide a single, well-defined API surface for external clients and users to interact with the middleware. The DT Gateway acts as an API façade and centralizes cross-cutting functionality such as authentication, authorization, rate limiting, request composition, and API versioning.
+
+\paragraph{Responsibilities}
+\begin{itemize}
+  \item Expose stable external APIs for models, instances, devices and telemetry.
+  \item Centralize authentication and authorization policies for external clients; validate tokens and forward identity context.
+  \item Route and compose requests to internal services (Configuration Service, Device Facade, Orchestrator), including aggregation endpoints that combine results.
+  \item Enforce cross-cutting policies: rate limiting, quotas, request logging, tracing, and API versioning.
+  \item Support synchronous endpoints and asynchronous job submission for long running operations (returning job ids and status endpoints).
+\end{itemize}
+
+\paragraph{Suggested Interfaces}
+\begin{itemize}
+  \item GET /v1/dt/instances/{id} --- retrieve a digital twin instance (optionally with device bindings and recent telemetry).
+  \item POST /v1/dt/instances --- create an instance (forwards to Orchestrator API).
+  \item POST /v1/devices/{id}/rpc --- invoke device RPC (forwards to Device Facade with policy enforcement).
+  \item POST /v1/parse-model --- submit a model for parsing (forwards to Orchestrator parser orchestration).
+  \item POST /v1/propagate/{instance_property_id} --- request propagation; returns a job id if asynchronous.
+\end{itemize}
+
+\paragraph{Design notes}
+The DT Gateway should be stateless and horizontally scalable. It should propagate caller identity and tracing headers to internal services for observability and auditability. Consider using an API gateway product (Envoy, Kong, etc.) or a lightweight custom gateway depending on organizational requirements. Cache read-heavy responses and apply API-level caching where appropriate.
+
+\section{Data flows and sequences}
+\subsection{Device discovery}
+\begin{enumerate}
+  \item Facade calls `GetToken` on Configuration service to obtain gateway credentials.
+  \item Facade queries the gateway API for devices and synchronizes the local store.
+  \item Facade publishes `DeviceDiscovered` events to the Telemetry Sink.
+\end{enumerate}
+
+\subsection{Model parsing and instance creation}
+\begin{enumerate}
+  \item Orchestrator receives model spec and calls the parser service (or uses embedded parser).
+  \item Orchestrator persists parsed model, creates model elements and relationships.
+  \item Orchestrator creates instances and instance properties.
+\end{enumerate}
+
+\subsection{Semantic binding and propagation}
+\begin{enumerate}
+  \item Orchestrator requests candidate device properties from Facade and computes similarity scores.
+  \item Orchestrator stores suggestions and optionally binds automatically.
+  \item On causal DT change, Orchestrator triggers propagation to the device (sync or async) through the Facade.
+\end{enumerate}
+
+\section{Cross-cutting concerns}
+\subsection{Security}
+Store secrets securely, protect internal APIs and audit propagation actions.
+
+\subsection{Reliability}
+Use retry policies, separate low-latency RPC profiles from background tasks, and introduce queuing/backpressure.
+
+\subsection{Observability}
+Instrument parser calls, binding suggestions, propagation success/failure and RPC latency percentiles.
+
+\subsection{Scalability}
+Partition by gateway or system context. Use stateless workers and persistent stores for state.
+
+\section{Suggested API summary}
+\begin{itemize}
+  \item GetToken(gateway_id) -> { token, expires_at }
+  \item DiscoverDevices(gateway_id, params) -> { created, updated }
+  \item CallRPC(device_id, method, params, timeout) -> { status, body }
+  \item ParseModel(model_spec) -> ParsedModel
+  \item CreateInstance(model_id, instance_spec) -> Instance
+  \item SuggestBindings(instance_id) -> [ { property_id, device_property_id, score } ]
+  \item PropagateProperty(instance_property_id, value, mode=synchronous|asynchronous) -> { status }
+  \item DT Gateway examples:
+  \begin{itemize}
+    \item GET /v1/dt/instances/{id} -> { instance, bindings?, recent_telemetry? }
+    \item POST /v1/dt/instances -> { instance_id }
+    \item POST /v1/devices/{id}/rpc -> { task_id | immediate_result }
+    \item POST /v1/parse-model -> { parse_job_id | parsed_model }
+    \item POST /v1/propagate/{instance_property_id} -> { job_id }
+  \end{itemize}
+\end{itemize}
+
+\section{Implementation options and trade-offs}
+\paragraph{Persistence}
+Relational DB for canonical models and instances; optional graph DB for relationship-centric queries; time-series DB for telemetry.
+
+\paragraph{Parser}
+Option: external parser service for DTDL → parsed JSON. Alternately embed a parser library into Orchestrator.
+
+\paragraph{Binding engine}
+Pluggable adapters: name-based heuristics, ontology/rule-based mapping or embedding-based ML service. Integrate human approval workflows.
+
+\section{Risks and mitigations}
+\begin{itemize}
+  \item Incorrect automatic bindings: mitigate via conservative thresholds, human confirmation, logging and rollbacks.
+  \item Gateway auth changes: use caching and clear failure modes.
+  \item Latency vs correctness: allow per-operation configuration of timeouts and sync/async behavior.
+\end{itemize}
+
+\section{Next steps}
+\begin{itemize}
+  \item Implement integration tests that simulate a gateway and verify end-to-end discovery, instance creation and propagation.
+  \item Define normalized parsed-model JSON schema and concrete examples.
+  \item Add UI mockups for binding review.
+\end{itemize}
+
+\end{document}
