@@ -288,7 +288,10 @@ INFLUXDB_TOKEN=admin_token_123
 # Middleware
 DEBUG=True
 ALLOWED_HOSTS=0.0.0.0,localhost,127.0.0.1
+
 ```
+> [!CAUTION]
+> Para deploy em ambientes com acesso externo, você deve realizar modificações no valor das variáveis de ambiente, tanto no .env como no arquivo docker-compose.yml
 
 ### 2.1. Configurações Iniciais
 
