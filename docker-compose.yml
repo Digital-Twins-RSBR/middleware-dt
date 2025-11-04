@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports:
-      - "${POSTGRES_PORT}:${DB_HOST_PORT:-5432}"
+      - "${DB_HOST_PORT:-5433}:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
@@ -24,6 +24,7 @@ services:
       - db
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      START_LISTENER_AFTER_TB: 0  # Desabilita espera pelo ThingsBoard
     healthcheck:
       test: ["CMD", "python", "manage.py", "check"]
       interval: 5s
@@ -72,7 +73,7 @@ services:
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=middts
-      - DOCKER_INFLUXDB_INIT_PASSWORD=123
+      - DOCKER_INFLUXDB_INIT_PASSWORD=middts123
       - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORGANIZATION}
       - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET}
       - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN}
