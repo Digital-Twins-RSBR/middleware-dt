@@ -243,7 +243,7 @@ Dispositivos com bateria limitada: 300-600 segundos
 
 
 
-Como configurar e executar o projeto utilizando Docker Compose. 
+# Como configurar e executar o projeto utilizando Docker Compose. 
 
 
 
@@ -252,72 +252,15 @@ Como configurar e executar o projeto utilizando Docker Compose.
 
 
 
-### 1. Criar o arquivo `.env`
-
-Crie um arquivo `.env` na raiz do projeto para armazenar as variáveis de ambiente:
-
-```bash
-touch .env
-```
-
-
-### 2. Adicionar variáveis de ambiente
-
-Dentro da raiz do projeto existe um arquivo .env.example que irá ajudar no preenchimento das variaveis. Adicione as variáveis no arquivo `.env` com suas respectivas configurações.
-
-
-### 1. Iniciar os containers
-
-Execute o comando abaixo para iniciar os containers:
-
-```bash
-docker compose up
-```
-
-### 2. Parar os containers
-
-Para interromper os containers, use a combinação de teclas:
-
-```bash
-Ctrl+C
-```
-
-### 3. Remover os containers
-
-Para remover os containers criados, execute:
-
-```bash
-docker compose down
-```
-
-
-
-### Criar um usuário administrador
-
-Após iniciar os containers, você pode criar um usuário administrador para o sistema com o seguinte comando:
-
-```bash
-docker compose exec middleware python manage.py createsuperuser
-
-
-# Executando o Projeto com Docker Compose
-
-O projeto pode ser facilmente executado com Docker Compose, incluindo todos os serviços necessários: PostgreSQL, Neo4j, Parser, InfluxDB e o Middleware Django (MidDiTS).
-
-## Pré-requisitos
-
-- Docker instalado ([Instruções de instalação](https://docs.docker.com/get-docker/))
-- Docker Compose instalado ([Instruções de instalação](https://docs.docker.com/compose/install/))
-
-## Configuração
-
-### 1. Crie um arquivo `.env`
+## 1. Criar o arquivo `.env`
 
 Copie o modelo:
 
 ```bash
 cp .env.example .env
 ```
+
+## 2. Adicionar variáveis de ambiente
 
 Edite o `.env` conforme necessário para o seu ambiente. O conteúdo mínimo recomendado:
 
@@ -347,10 +290,19 @@ DEBUG=True
 ALLOWED_HOSTS=0.0.0.0,localhost,127.0.0.1
 ```
 
-## Subindo os serviços
+### 2.1. Configurações Iniciais
+
+Antes de inicializar os containers, execute os seguintes procedimentos
+
+- Crie o arquivo settings.py, com base no arquivo settings_sample.py dentro da pasta middleware-dt, referente ao projeto Django
+
+
+## 3. Iniciar os containers
+
+Execute o comando abaixo para iniciar os containers:
 
 ```bash
-docker compose up --build -d
+docker-compose up --build -d
 ```
 
 Isso irá subir:
@@ -362,20 +314,7 @@ Isso irá subir:
 - MidDiTS (Gunicorn + Django)
 - Nginx (como proxy reverso)
 
-## Acessando os serviços
-
-- MidDiTS API: http://localhost
-- InfluxDB UI: http://localhost:8086
-- Neo4j: http://localhost:7474
-- Parser: http://localhost:8080
-
-## Criando o superusuário
-
-```bash
-docker compose exec middleware python manage.py createsuperuser
-```
-
-## Healthcheck de dependências
+### 3.1 Healthcheck de dependências
 
 Após subir os serviços, execute o script:
 
@@ -393,22 +332,36 @@ Parser API: OK
 ✅ Verificação concluída.
 ```
 
-## Finalizando
+## 4. Parar os containers
+
+Para interromper os containers, use a combinação de teclas:
 
 Para parar:
 
 ```bash
-docker compose down
+docker-compose down
 ```
 
-🔗 Acessando os Serviços
 
-Após a inicialização dos containers, os serviços estarão disponíveis nas seguintes URLs:
-Serviço	URL	Observação
-MidDiTS API	http://localhost/api/docs	Interface REST da aplicação
-Admin Django	http://localhost/admin	Interface administrativa
-Nginx (proxy)	http://localhost	Redireciona para o middts
-Neo4j	http://localhost:7474	Interface gráfica do Neo4j
-InfluxDB	http://localhost:8086	Gerenciador de buckets e tokens
-Parser ThingsBoard	http://localhost:8080 / 8081	API auxiliar para parser DTDL
-PostgreSQL	localhost:5434	Conexão para ferramentas como DBeaver ou psql
+## 5. Usando o MiDdiTS
+### 5.1 Criar um usuário administrador
+
+Após iniciar os containers, você pode criar um usuário administrador para o sistema com o seguinte comando:
+
+```bash
+docker -it exec <container_middts> python manage.py createsuperuser
+```
+
+### 5.2 Acessando os serviços
+
+- MidDiTS API: http://localhost
+- InfluxDB UI: http://localhost:8086
+- Neo4j: http://localhost:7474
+- Parser: http://localhost:8082 | Swagger: http://localhost:8082/swagger/index.html
+
+### 5.3. Configurações no MidDits
+TODO
+### 5.4. Configurações no Thinsboard
+TODO
+
+
