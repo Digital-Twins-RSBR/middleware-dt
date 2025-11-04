@@ -273,8 +273,23 @@ Execute o comando abaixo para iniciar os containers:
 ```bash
 docker compose up
 ```
+- Para acessar a api: localhost:80 
 
-### 2. Parar os containers
+### 2. Verificar containers
+Para verificar se todos os containers estão funcionando corretamente, execute:
+
+```bash
+docker ps
+```
+Devem aparecer 5 containers:
+- nginx  
+- middleware-dt-middleware  
+- postgres:15
+- neo4j:5.8   
+- andregustavoo/parserwebapi:latest 
+
+
+### 3. Parar os containers
 
 Para interromper os containers, use a combinação de teclas:
 
@@ -282,7 +297,7 @@ Para interromper os containers, use a combinação de teclas:
 Ctrl+C
 ```
 
-### 3. Remover os containers
+### 4. Remover os containers
 
 Para remover os containers criados, execute:
 
