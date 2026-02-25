@@ -242,7 +242,7 @@ class Property(models.Model):
             valor = float(ival)
         # Prefer ThingsBoard internal id (thingsboard_id) when available to avoid conflicts
         sensor_id = self.device.identifier
-        tags = {"sensor": sensor_id, "source": "middts"}
+        tags = {"sensor": sensor_id, "source": "middts", "direction": "S2M"}
         # S2M: Middleware RECEBEU dados - usar received_timestamp
         fields = {key: valor, "received_timestamp": timestamp}
         data = format_influx_line("device_data", tags, fields, timestamp=timestamp)
@@ -332,26 +332,26 @@ class Property(models.Model):
             print(f"[{datetime.now().isoformat()}] ❌ JWT failed: {e}")
             return self._create_mock_response()
         
-        # Setup RPC call - use TWOWAY with fast TB timeout (1s)
+        # Setup RPC call - use TWOWAY with fast TB timeout
         urltwoway = f"{gateway.url}/api/rpc/twoway/{device.identifier}"
         headers = {
             "Content-Type": "application/json",
             "X-Authorization": f"Bearer {token}",
         }
         
-        # Ultra-URLLC: <100ms target with balanced timeouts
+        # Ultra-URLLC with 3 aggressive retries for max reliability
         import time
         retry_count = 0
-        max_retries = 1  # Only one retry for speed
-        base_timeout = 0.1  # 100ms - balanced between speed and reliability
+        max_retries = 3  # Three quick retries for max delivery
+        base_timeout = 0.1  # 100ms - fail fast on each attempt
         
         while retry_count <= max_retries:
             try:
                 from facade.utils import get_session_for_gateway
                 session = get_session_for_gateway(gateway.id)
                 
-                # Ultra-aggressive timeouts: 50ms, 100ms
-                current_timeout = base_timeout * (2 ** retry_count)  # 0.05s, 0.1s
+                # Same timeout for all retries - fail fast
+                current_timeout = base_timeout
                 
                 if rpc_type.name == 'WRITE' and self.rpc_write_method:
                     print(f"[{datetime.now().isoformat()}] ⚡ ULTRA-WRITE (try {retry_count+1}): {self.rpc_write_method}={self.get_value()}")
@@ -400,18 +400,18 @@ class Property(models.Model):
                     print(f"[{datetime.now().isoformat()}] ⚡ ULTRA-RPC FALLBACK after {elapsed:.3f}s: {str(e)[:50]}...")
                     return self._create_mock_response()
 
-    def _create_mock_response(self):
-        """Create a successful mock response for fallback scenarios"""
+    def _create_mock_response(self, status_code=200):
+        """Create a mock response for fallback/oneway scenarios"""
         class MockResponse:
-            def __init__(self, prop):
-                self.status_code = 200
-                self.text = "mock_success"
+            def __init__(self, prop, status_code):
+                self.status_code = status_code
+                self.text = "mock_success" if status_code == 200 else "mock_failure"
                 self._prop = prop
             
             def json(self):
                 return {self._prop.name: self._prop.get_value()}
         
-        return MockResponse(self)
+        return MockResponse(self, status_code)
 
     def _write_m2s_sent_timestamp(self):
         """Write M2S sent timestamp to InfluxDB for latency measurement"""
@@ -428,7 +428,8 @@ class Property(models.Model):
             
             tags = {
                 "sensor": sensor_id, 
-                "source": "middts"
+                "source": "middts",
+                "direction": "M2S"
             }
             fields = {"sent_timestamp": sent_ts}
             
@@ -498,7 +499,7 @@ class Property(models.Model):
             sent_timestamp = int(time.time() * 1000)
             sensor_id = self.device.identifier
             
-            tags = {"sensor": sensor_id, "source": "middts"}
+            tags = {"sensor": sensor_id, "source": "middts", "direction": "M2S"}
             fields = {"sent_timestamp": sent_timestamp}
             
             from facade.utils import format_influx_line
