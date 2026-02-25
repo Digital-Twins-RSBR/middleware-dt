@@ -172,60 +172,123 @@ def find_or_create_hierarchy(root_tokens: list[str], system: SystemContext | Non
             existing = DigitalTwinInstance.objects.filter(name__iexact=name).first()
         if existing:
             parent = existing
-            prev_parent = parent
-            continue
-
-        # seleciona modelo baseado no token (prioriza modelos do system)
-        model = find_model_for_token(token, system)
-        if not model:
-            # último recurso: tenta achar model pelo device completo (se disponível)
-            model = DTDLModel.objects.filter(system=system).first() if system else DTDLModel.objects.first()
-
-        if dry_run:
-            created_instances.append((name, model.name if model else None))
-            parent = None
         else:
-            # cria a instância com model (pode ser None — mas preferimos ter um model)
-            if model is None:
-                # tenta fallback geral (evita criar instância sem modelo que pode quebrar saves posteriores)
+            # seleciona modelo baseado no token (prioriza modelos do system)
+            model = find_model_for_token(token, system)
+            if not model:
+                # último recurso: tenta achar model pelo device completo (se disponível)
                 model = DTDLModel.objects.filter(system=system).first() if system else DTDLModel.objects.first()
-            # sanitize name: avoid creating instances with generic suffixes like
-            # 'condominium' or with the exact model name (these cause confusing entries)
-            try:
-                model_norm = normalize_name(model.name) if model and model.name else ''
-            except Exception:
-                model_norm = ''
-            name_norm = normalize_name(name) if name else ''
-            if model_norm and (name_norm == model_norm or 'condominium' in name_norm or 'condominio' in name_norm):
-                # leave name empty to let DigitalTwinInstance.save() generate a proper name
-                inst = DigitalTwinInstance.objects.create(model=model)
-            else:
-                inst = DigitalTwinInstance.objects.create(model=model, name=name)
-            created_instances.append((name, model.name if model else None))
-            parent = inst
 
-            # cria relação com parent anterior: tenta encontrar ModelRelationship entre os modelos
-            if idx > 0 and prev_parent:
+            if dry_run:
+                created_instances.append((name, model.name if model else None))
+                parent = None
+            else:
+                # cria a instância com model (pode ser None — mas preferimos ter um model)
+                if model is None:
+                    # tenta fallback geral (evita criar instância sem modelo que pode quebrar saves posteriores)
+                    model = DTDLModel.objects.filter(system=system).first() if system else DTDLModel.objects.first()
+                # sanitize name: avoid creating instances with generic suffixes like
+                # 'condominium' or with the exact model name (these cause confusing entries)
                 try:
-                    rel = None
-                    if prev_parent.model and model:
-                        # procura relacionamento cujo source = prev_parent.model e target corresponde ao model
-                        rel = prev_parent.model.model_relationships.filter(target__icontains=(model.dtdl_id or normalize_name(model.name))).first()
-                        if not rel:
-                            rel = prev_parent.model.model_relationships.filter(name__icontains=normalize_name(model.name.split()[0])).first()
-                    if rel:
-                        DigitalTwinInstanceRelationship.objects.update_or_create(
-                            source_instance=prev_parent,
-                            target_instance=parent,
-                            defaults={'relationship': rel}
-                        )
-                    else:
-                        # Não criar DigitalTwinInstanceRelationship vazio — apenas logar
-                        print(f"[WARN] No ModelRelationship found between {prev_parent.model.name if prev_parent.model else 'N/A'} -> {model.name if model else 'N/A'}; skipping instance relationship creation.")
-                except Exception as e:
-                    print(f"[ERROR] Failed creating relationship between instances {prev_parent} -> {parent}: {e}")
+                    model_norm = normalize_name(model.name) if model and model.name else ''
+                except Exception:
+                    model_norm = ''
+                name_norm = normalize_name(name) if name else ''
+                if model_norm and (name_norm == model_norm or 'condominium' in name_norm or 'condominio' in name_norm):
+                    # leave name empty to let DigitalTwinInstance.save() generate a proper name
+                    inst = DigitalTwinInstance.objects.create(model=model)
+                else:
+                    inst = DigitalTwinInstance.objects.create(model=model, name=name)
+                created_instances.append((name, model.name if model else None))
+                parent = inst
+
+        # cria relação com parent anterior: tenta encontrar ModelRelationship entre os modelos
+        if not dry_run and idx > 0 and prev_parent and parent:
+            try:
+                source_model = prev_parent.model
+                target_model = parent.model if parent else None
+                rel = resolve_instance_relationship(source_model, target_model)
+                if rel:
+                    DigitalTwinInstanceRelationship.objects.update_or_create(
+                        source_instance=prev_parent,
+                        target_instance=parent,
+                        defaults={'relationship': rel}
+                    )
+                else:
+                    # Não criar DigitalTwinInstanceRelationship vazio — apenas logar
+                    print(f"[WARN] No ModelRelationship found between {source_model.name if source_model else 'N/A'} -> {target_model.name if target_model else 'N/A'}; skipping instance relationship creation.")
+            except Exception as e:
+                print(f"[ERROR] Failed creating relationship between instances {prev_parent} -> {parent}: {e}")
         prev_parent = parent
     return parent, created_instances
+
+
+def resolve_instance_relationship(source_model: DTDLModel | None, target_model: DTDLModel | None):
+    if not source_model or not target_model:
+        return None
+    target_id = target_model.dtdl_id or ''
+    target_id_nover = re.sub(r";\d+$", "", target_id)
+    target_name = normalize_name(target_model.name or '')
+    target_token = normalize_name(target_model.name.split()[0]) if target_model.name else ''
+    for rel in source_model.model_relationships.all():
+        rel_target = rel.target or ''
+        rel_name = rel.name or ''
+        if target_id and target_id in rel_target:
+            return rel
+        if target_id_nover and target_id_nover in rel_target:
+            return rel
+        if target_name and target_name in normalize_name(rel_target):
+            return rel
+        if target_token and target_token in normalize_name(rel_name):
+            return rel
+    return None
+
+
+def extract_house_key_strict(name: str | None):
+    if not name:
+        return None
+    m = re.search(r"\b(house|home|apt|apartment|condo|condominium|unit)\s*(\d+)\b", name.lower())
+    if not m:
+        return None
+    return f"{m.group(1)} {m.group(2)}"
+
+
+def repair_house_relationships(system: SystemContext | None, dry_run=False):
+    house_model = DTDLModel.objects.filter(system=system, name__icontains='house').first() if system else DTDLModel.objects.filter(name__icontains='house').first()
+    if not house_model:
+        return 0
+    target_models = []
+    for key in ('room', 'garden', 'pool'):
+        tm = DTDLModel.objects.filter(system=system, name__icontains=key).first() if system else DTDLModel.objects.filter(name__icontains=key).first()
+        if tm:
+            target_models.append(tm)
+    if not target_models:
+        return 0
+
+    created = 0
+    houses = DigitalTwinInstance.objects.filter(model=house_model)
+    for house in houses:
+        house_key = extract_house_key_strict(house.name)
+        if not house_key:
+            continue
+        for tm in target_models:
+            rel = resolve_instance_relationship(house_model, tm)
+            if not rel:
+                continue
+            targets = DigitalTwinInstance.objects.filter(model=tm)
+            for target in targets:
+                target_key = extract_house_key_strict(target.name)
+                if target_key and target_key == house_key:
+                    if dry_run:
+                        continue
+                    _, was_created = DigitalTwinInstanceRelationship.objects.update_or_create(
+                        source_instance=house,
+                        target_instance=target,
+                        defaults={'relationship': rel}
+                    )
+                    if was_created:
+                        created += 1
+    return created
 
 
 def create_full_topology(system: SystemContext | None, dry_run=False):
@@ -368,8 +431,7 @@ class Command(BaseCommand):
                                 created_list.append((mdl.name, inst.name))
                         # create relationship with parent
                         if parent_instance and inst:
-                            # attempt to find ModelRelationship
-                            rel = ModelRelationship.objects.filter(dtdl_model=parent_instance.model, target__icontains=mdl.dtdl_id).first()
+                            rel = resolve_instance_relationship(parent_instance.model, mdl)
                             if rel:
                                 DigitalTwinInstanceRelationship.objects.update_or_create(
                                     source_instance=parent_instance,
@@ -425,3 +487,8 @@ class Command(BaseCommand):
                     created += 1
                     self.stdout.write(self.style.SUCCESS(f"Created/updated DT instance for device {d.name}: {instance}"))
             # end groups processing
+
+        if not dry_run:
+            added = repair_house_relationships(system, dry_run=dry_run)
+            if added:
+                self.stdout.write(self.style.SUCCESS(f"Repaired {added} house-level relationships"))

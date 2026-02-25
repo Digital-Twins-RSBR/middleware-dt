@@ -79,8 +79,8 @@ class URLLCRedisSessionManager:
                 host=redis_host, 
                 port=redis_port, 
                 decode_responses=True,
-                socket_connect_timeout=0.1,  # Ultra-fast connection timeout
-                socket_timeout=0.5,          # Fast operation timeout
+                socket_connect_timeout=0.5,  # 500ms connection timeout
+                socket_timeout=2.0,          # 2s operation timeout
                 health_check_interval=10     # Health check every 10s
             )
             
@@ -138,19 +138,20 @@ class URLLCRedisSessionManager:
                 allowed_methods=frozenset(['GET', 'POST'])
             )
             
-            # Ultra-aggressive single connection policy with Redis coordination
+            # Multi-connection pool to handle concurrent RPCs
             adapter = HTTPAdapter(
                 max_retries=retries,
-                pool_connections=1,        # Single connection per gateway PER PROCESS
-                pool_maxsize=1,           # Maximum 1 connection in pool
-                pool_block=True           # Block and reuse existing connection
+                pool_connections=10,       # 10 connections for concurrent requests
+                pool_maxsize=20,            # Max 20 connections in pool
+                pool_block=True            # Block and reuse existing connection
             )
             
             session.mount('http://', adapter)
             session.mount('https://', adapter)
             
-            # Ultra-low timeout and persistent connection headers
-            session.timeout = 0.05  # 50ms default timeout - ultra aggressive!
+            # Ultra-aggressive timeout with connection pooling
+            session.timeout = 0.05  # 50ms default timeout
+
             session.headers.update({
                 'Connection': 'keep-alive',
                 'Keep-Alive': 'timeout=10, max=1000',  # Long-lived connection
@@ -241,20 +242,19 @@ class URLLCSessionManager:
                     allowed_methods=frozenset(['GET', 'POST'])
                 )
                 
-                # Ultra-lightweight adapter for minimal overhead  
-                # Force single connection with aggressive connection reuse
+                # Multi-connection adapter for concurrent RPCs
                 adapter = HTTPAdapter(
                     max_retries=retries,
-                    pool_connections=1,        # Single connection per gateway
-                    pool_maxsize=1,           # Maximum 1 connection in pool
-                    pool_block=True           # Block and reuse existing connection
+                    pool_connections=10,        # 10 connections for concurrency
+                    pool_maxsize=20,            # Max 20 connections in pool
+                    pool_block=True             # Block and reuse existing connection
                 )
                 
                 session.mount('http://', adapter)
                 session.mount('https://', adapter)
                 
-                # Set ultra-aggressive default timeout and connection reuse
-                session.timeout = 0.1  # 100ms default timeout
+                # Ultra-aggressive timeout with connection pooling
+                session.timeout = 0.05  # 50ms default timeout
                 
                 # Force persistent connection headers
                 session.headers.update({

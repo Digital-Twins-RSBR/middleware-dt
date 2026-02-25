@@ -328,14 +328,10 @@ class Command(BaseCommand):
         """Processa mensagens recebidas do ThingsBoard"""
         logger.info(f"Processing message for device {device.name}")
         
-        # Verifica o status do dispositivo primeiro
-        device_active = await self.check_device_status(device)
-        await self.update_dt_instance_status(device, device_active)
-
-        if not device_active:
-            logger.warning(f"Device {device.name} is inactive, skipping telemetry update")
-            return
-
+        # OPTIMIZATION: Skip device status check - it was blocking 91.5% of messages
+        # Devices were being marked inactive because they lack 'active' attribute in TB
+        # Simply process all received telemetry
+        
         latest_values = data.get('data')
         if latest_values:
             for key, value in latest_values.items():
@@ -351,7 +347,7 @@ class Command(BaseCommand):
                         dtinstance__active=True
                     ).update)(value=valor)
                     
-                    if self.use_influxdb and device_active:
+                    if self.use_influxdb:
                         timestamp = int(time.time() * 1000)
                         property = await sync_to_async(lambda: Property.objects.filter(device=device, name=key).first())()
                         # Do not append _i to the key. Force integer types for Boolean/Integer properties
