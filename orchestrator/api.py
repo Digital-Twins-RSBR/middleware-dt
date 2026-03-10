@@ -318,40 +318,55 @@ def update_causal_property(
         # if not isinstance(payload.value, expected_type):
         #     raise HttpError(400, f"Invalid value type. Expected {expected_type}, got {type(payload.value)}.")
 
-        # Atualiza o valor da propriedade
+        # Atualiza o valor da propriedade a partir da RESPOSTA do dispositivo.
+        # Não deve repropagar para o device (evita loop/eco de RPC e duplicação de sent_timestamp).
         property_obj.value = payload.value
-        property_obj.save()
+        property_obj.save(
+            propagate_to_device=False,
+            correlation_id=getattr(payload, 'correlation_id', None)
+        )
         
         # Captura timestamp de resposta M2S para correção de latência
         try:
             import time
             from facade.utils import format_influx_line
-            from middleware_dt.settings import INFLUXDB_TOKEN, INFLUXDB_URL, USE_INFLUX_TO_EVALUATE
+            from middleware_dt.settings import INFLUXDB_TOKEN, INFLUXDB_URL, USE_INFLUX_TO_EVALUATE, ENABLE_INFLUX_LATENCY_MEASUREMENTS
             
-            print(f"[DEBUG] update_causal_property called for property {property_obj.name}")
-            print(f"[DEBUG] USE_INFLUX_TO_EVALUATE: {USE_INFLUX_TO_EVALUATE}")
-            print(f"[DEBUG] INFLUXDB_TOKEN exists: {bool(INFLUXDB_TOKEN)}")
-            print(f"[DEBUG] property_obj.device_property: {property_obj.device_property}")
-            print(f"[DEBUG] device exists: {property_obj.device_property.device if property_obj.device_property else 'None'}")
+            print(f"[DEBUG] M2S response received for property {property_obj.name}")
+            print(f"[DEBUG] correlation_id from payload: {getattr(payload, 'correlation_id', None)}")
             
-            if (USE_INFLUX_TO_EVALUATE and INFLUXDB_TOKEN and 
+            if (USE_INFLUX_TO_EVALUATE and ENABLE_INFLUX_LATENCY_MEASUREMENTS and INFLUXDB_TOKEN and 
                 property_obj.device_property and property_obj.device_property.device):
                 response_timestamp = int(time.time() * 1000)
                 sensor_id = property_obj.device_property.device.identifier
-                tags = {"sensor": sensor_id, "source": "middts"}
-                fields = {"sent_timestamp": response_timestamp}
-                data = format_influx_line("device_data", tags, fields, timestamp=response_timestamp)
+                correlation_id = getattr(payload, 'correlation_id', None)
+                
+                # Write received_timestamp to latency_measurement (same measurement as sent_timestamp)
+                tags = {"sensor": sensor_id, "source": "middts", "direction": "M2S"}
+                if correlation_id:
+                    tags["correlation_id"] = str(correlation_id)
+                
+                # Include property value and timestamps
+                fields = {
+                    "received_timestamp": response_timestamp,
+                    "status": 1.0 if payload.value else 0.0,
+                    property_obj.name: (1.0 if payload.value else 0.0) if isinstance(payload.value, bool) else float(payload.value)
+                }
+                data = format_influx_line("latency_measurement", tags, fields, timestamp=response_timestamp)
                 
                 import requests
-                requests.post(
+                resp = requests.post(
                     INFLUXDB_URL,
                     headers={"Authorization": f"Token {INFLUXDB_TOKEN}", "Content-Type": "text/plain"},
                     data=data,
-                    timeout=0.1
+                    timeout=0.5
                 )
-                print(f"[SUCCESS] M2S response timestamp logged for {sensor_id}: {response_timestamp}")
+                if resp.status_code == 204:
+                    print(f"[M2S-RESPONSE] ✅ Logged received_timestamp for {sensor_id} (correlation_id={correlation_id})")
+                else:
+                    print(f"[M2S-RESPONSE] ⚠️ Failed: {resp.status_code} - {resp.text}")
             else:
-                print(f"[SKIP] M2S timestamp not logged - conditions not met")
+                print(f"[M2S-RESPONSE] SKIP - latency measurements disabled or missing data")
         except Exception as e:
             print(f"[ERROR] M2S timestamp logging failed: {e}")
             import traceback

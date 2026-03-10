@@ -358,6 +358,13 @@ class DigitalTwinInstanceProperty(models.Model):
                 print(f"[{datetime.now().isoformat()}] 🔧 Propagate to device: {propagate_to_device}")
             except Exception:
                 propagate_to_device = True
+        
+        # Extract correlation_id from kwargs for end-to-end tracing
+        correlation_id = kwargs.pop('correlation_id', None)
+        # Indicates sent_timestamp for this command was already logged upstream
+        m2s_sent_logged = bool(kwargs.pop('m2s_sent_logged', False))
+        if correlation_id:
+            print(f"[{datetime.now().isoformat()}] 🔗 Correlation ID: {correlation_id}")
 
         # called_binding = False
         binding_start = time.time()
@@ -406,7 +413,11 @@ class DigitalTwinInstanceProperty(models.Model):
             
             device_save_start = time.time()
             print(f"[{datetime.now().isoformat()}] 📤 Saving to device property: '{old_device_value}' → '{device_property.value}'")
-            device_property.save()
+            # Propagate tracing/metrics flags to device property save
+            if correlation_id:
+                device_property.save(correlation_id=correlation_id, m2s_sent_logged=m2s_sent_logged)
+            else:
+                device_property.save(m2s_sent_logged=m2s_sent_logged)
             device_save_time = time.time() - device_save_start
             print(f"[{datetime.now().isoformat()}] ✅ Device property save completed in {device_save_time:.3f}s")
             

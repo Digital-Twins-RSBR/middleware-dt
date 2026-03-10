@@ -1,4 +1,17 @@
 import random
+import requests
+import uuid
+from django.conf import settings
+from facade.utils import format_influx_line
+
+INFLUXDB_URL = f"http://{settings.INFLUXDB_HOST}:{settings.INFLUXDB_PORT}/api/v2/write?org={settings.INFLUXDB_ORGANIZATION}&bucket={settings.INFLUXDB_BUCKET}&precision=ms"
+INFLUXDB_TOKEN = settings.INFLUXDB_TOKEN
+USE_INFLUX_TO_EVALUATE = settings.USE_INFLUX_TO_EVALUATE
+ENABLE_INFLUX_LATENCY_MEASUREMENTS = settings.ENABLE_INFLUX_LATENCY_MEASUREMENTS
+INFLUXDB_HEADERS = {
+    "Authorization": f"Token {INFLUXDB_TOKEN}",
+    "Content-Type": "text/plain"
+}
 import asyncio
 import time
 from datetime import datetime
@@ -7,9 +20,15 @@ from django.core.management.base import BaseCommand
 from orchestrator.models import DigitalTwinInstance, DigitalTwinInstanceProperty
 
 class Command(BaseCommand):
-    help = 'Update causal properties of DigitalTwinInstanceProperties every 5 seconds'
+    help = 'Update causal properties of DigitalTwinInstanceProperties'
 
     def add_arguments(self, parser):
+        parser.add_argument(
+            '--interval',
+            type=float,
+            default=5,
+            help='Interval in seconds between polling cycles (default: 5)'
+        )
         parser.add_argument(
             '--dt-ids',
             nargs='+',
@@ -45,6 +64,7 @@ class Command(BaseCommand):
         house_names = options.get('house_names')
         tb_ids_file = options.get('thingsboard_ids_file')
         house_names_file = options.get('house_names_file')
+        interval = options.get('interval', 5)
 
         # If file args provided, read them and populate lists (one per line)
         if tb_ids_file and (not thingsboard_ids):
@@ -123,24 +143,20 @@ class Command(BaseCommand):
             thingsboard_ids or tb_ids_file or house_names or house_names_file or dt_ids
         )
 
-        if orchestrator_provided and not dt_ids:
-            # Orchestrator provided targets but we couldn't resolve any DTs.
-            # Fail fast so operator can fix the target list; do not process ALL devices.
-            print(f"[{datetime.now().isoformat()}] ❌ Orchestrator provided target arguments but no DigitalTwin IDs were resolved. Aborting to avoid processing ALL devices.")
-            return
-
-        if not orchestrator_provided and not dt_ids and not thingsboard_ids:
-            # Legacy fallback only when no orchestrator-provided targets at all.
-            print(f"[{datetime.now().isoformat()}] 🧠 No specific devices provided.\n    NOTE: orchestration should pass --thingsboard-ids or --dt-ids.\n    Falling back to processing ALL devices (this may be slow).")
+        # Patch: Always update all devices if no dt_ids are resolved, regardless of orchestrator arguments
+        if not dt_ids:
+            print(f"[{datetime.now().isoformat()}] 🧠 No DigitalTwin IDs resolved. Processing ALL devices (full coverage mode).")
+            dt_ids = None
         
         loop = asyncio.get_event_loop()
         print(f"[{datetime.now().isoformat()}] 🚀 Starting causal property updater with dt_ids: {dt_ids}")
+        print(f"[{datetime.now().isoformat()}] ⏱️  Polling interval set to {interval} seconds")
         try:
-            loop.run_until_complete(self.update_causal_properties(dt_ids))
+            loop.run_until_complete(self.update_causal_properties(dt_ids, interval))
         except KeyboardInterrupt:
             print(f"[{datetime.now().isoformat()}] ⏹️ Stopping causal property updater...")
 
-    async def update_causal_properties(self, dt_ids):
+    async def update_causal_properties(self, dt_ids, interval=5):
         cycle_count = 0
         while True:
             cycle_start = time.time()
@@ -177,11 +193,20 @@ class Command(BaseCommand):
                         prop_start = time.time()
                         property_name = await sync_to_async(lambda p: getattr(p.property, 'name', f'prop_{p.id}'))(prop)
                         print(f"[{datetime.now().isoformat()}] 🔄 Processing property '{property_name}' ({j+1}/{len(causal_properties)})")
-                        
+
                         device_property = await sync_to_async(lambda: prop.device_property)()
                         property_schema = await sync_to_async(lambda: prop.property.schema)()
-                        
+                        device_identifier = await sync_to_async(lambda: getattr(getattr(device_property, 'device', None), 'identifier', None))() if device_property else None
+                        dt_id = await sync_to_async(lambda: getattr(prop, 'dtinstance_id', None))()
+
                         if device_property:
+                            # Check if property has RPC write method BEFORE generating command
+                            rpc_write_method = await sync_to_async(lambda: getattr(device_property, 'rpc_write_method', None))()
+                            
+                            if not rpc_write_method:
+                                print(f"[{datetime.now().isoformat()}] ⏭️ Skipping property '{property_name}' - no rpc_write_method defined")
+                                continue
+                            
                             # Generate new value
                             value_gen_start = time.time()
                             old_value = prop.value
@@ -193,55 +218,120 @@ class Command(BaseCommand):
                                 new_value = float(round(random.uniform(0, 100), 2))
                             else:
                                 new_value = f"random_{random.randint(1000, 9999)}"
-                            
+
                             prop.value = new_value
                             value_gen_time = time.time() - value_gen_start
                             print(f"[{datetime.now().isoformat()}] 💱 Changed '{property_name}': {old_value} → {new_value} (type: {property_schema}, gen_time: {value_gen_time:.3f}s)")
+
+                            # Registrar no InfluxDB ANTES de propagar (only for properties that will trigger RPC)
+                            # Use correlation_id (UUID) for end-to-end tracing instead of request_id
+                            correlation_id = str(uuid.uuid4())
+                            sent_timestamp = int(time.time() * 1000)
                             
-                            # Propagate to the associated device/ThingsBoard, but do it
-                                # Propagate to the associated device/ThingsBoard, but do it
-                            # asynchronously so that HTTP timeouts or retries won't block
-                            # the periodic updater loop. The actual save call still uses
-                            # the propagate_to_device machinery (default True).
-                            async def _propagate(p):
+                            if USE_INFLUX_TO_EVALUATE and ENABLE_INFLUX_LATENCY_MEASUREMENTS and INFLUXDB_TOKEN:
+                                # Use format_influx_line for consistent formatting
+                                tags = {
+                                    "sensor": device_identifier,
+                                    "dt_id": dt_id,
+                                    "source": "middts",
+                                    "direction": "M2S",
+                                    "correlation_id": correlation_id
+                                }
+                                fields = {
+                                    property_name: float(1.0 if new_value else 0.0) if isinstance(new_value, bool) else float(new_value),
+                                    "sent_timestamp": sent_timestamp
+                                }
+                                influx_line = format_influx_line("latency_measurement", tags, fields, timestamp=sent_timestamp)
+                                
+                                try:
+                                    resp = requests.post(INFLUXDB_URL, headers=INFLUXDB_HEADERS, data=influx_line)
+                                    if resp.status_code != 204:
+                                        print(f"[M2S-SENT] ⚠️ Failed to write: {resp.status_code} - {resp.text}")
+                                    else:
+                                        print(f"[M2S-SENT] ✅ Logged sent_timestamp for {device_identifier} (correlation_id={correlation_id})")
+                                except Exception as e:
+                                    print(f"[M2S-SENT] ⚠️ Exception: {e}")
+                            else:
+                                print(f"[M2S-SENT] SKIP - latency measurements disabled for '{property_name}' (correlation_id={correlation_id})")
+
+                            # Propagate para o dispositivo
+                            async def _propagate(p, corr_id, target_value, max_attempts=1):
                                 propagate_start = time.time()
                                 prop_name = await sync_to_async(lambda pp: getattr(pp.property, 'name', f'prop_{pp.id}'))(p)
                                 print(f"[{datetime.now().isoformat()}] 🚀 Starting propagation for '{prop_name}'")
-                                try:
-                                    await sync_to_async(lambda: p.save(propagate_to_device=True))()
-                                    propagate_time = time.time() - propagate_start
-                                    # Try to get device identifier and dt id for structured logging
+
+                                last_status = None
+                                for attempt in range(1, max_attempts + 1):
                                     try:
-                                        device_identifier = await sync_to_async(lambda pp: getattr(getattr(pp, 'device_property', None).device, 'identifier', None))(p)
-                                    except Exception:
-                                        device_identifier = None
-                                    try:
-                                        dt_id = await sync_to_async(lambda pp: getattr(pp, 'dtinstance', None).id)(p)
-                                    except Exception:
-                                        dt_id = None
-                                    print(f"[{datetime.now().isoformat()}] ✅ Propagation completed for '{prop_name}' in {propagate_time:.3f}s")
-                                    print(f"[{datetime.now().isoformat()}] RPC_RESULT success=1 tb_id={device_identifier} dt_id={dt_id} prop={prop_name} time={propagate_time:.6f}")
-                                    return (True, propagate_time)
-                                except Exception as e:
-                                    propagate_time = time.time() - propagate_start
-                                    # Non-fatal: log to stdout so we have visibility in container logs
-                                    try:
-                                        device_identifier = await sync_to_async(lambda pp: getattr(getattr(pp, 'device_property', None).device, 'identifier', None))(p)
-                                    except Exception:
-                                        device_identifier = None
-                                    try:
-                                        dt_id = await sync_to_async(lambda pp: getattr(pp, 'dtinstance', None).id)(p)
-                                    except Exception:
-                                        dt_id = None
-                                    print(f"[{datetime.now().isoformat()}] ❌ Error propagating causal property '{prop_name}' after {propagate_time:.3f}s: {e}")
-                                    # sanitize error for single-line logging
-                                    err_str = str(e).replace('\n', ' ').replace('"', '\\"')
-                                    print(f"[{datetime.now().isoformat()}] RPC_RESULT success=0 tb_id={device_identifier} dt_id={dt_id} prop={prop_name} time={propagate_time:.6f} error={err_str}")
-                                    return (False, propagate_time)
+                                        # Ensure each retry sends the intended new value (save() may rollback to old on failure)
+                                        p.value = target_value
+                                        response = await sync_to_async(lambda: p.save(
+                                            propagate_to_device=True,
+                                            correlation_id=corr_id,
+                                            m2s_sent_logged=True,
+                                        ))()
+
+                                        status_code = getattr(response, 'status_code', None)
+                                        last_status = status_code
+
+                                        if status_code == 200:
+                                            propagate_time = time.time() - propagate_start
+                                            # Try to get device identifier and dt id for structured logging
+                                            try:
+                                                device_identifier = await sync_to_async(lambda pp: getattr(getattr(pp, 'device_property', None).device, 'identifier', None))(p)
+                                            except Exception:
+                                                device_identifier = None
+                                            try:
+                                                dt_id = await sync_to_async(lambda pp: getattr(pp, 'dtinstance', None).id)(p)
+                                            except Exception:
+                                                dt_id = None
+                                            print(f"[{datetime.now().isoformat()}] ✅ Propagation completed for '{prop_name}' in {propagate_time:.3f}s (attempt {attempt}/{max_attempts})")
+                                            print(f"[{datetime.now().isoformat()}] RPC_RESULT success=1 tb_id={device_identifier} dt_id={dt_id} prop={prop_name} time={propagate_time:.6f} attempt={attempt}")
+                                            return (True, propagate_time)
+
+                                        if attempt < max_attempts:
+                                            print(f"[{datetime.now().isoformat()}] 🔄 COMMAND-RETRY {attempt}/{max_attempts-1} for '{prop_name}' (status={status_code})")
+                                            await asyncio.sleep(0.05 * attempt)
+                                            continue
+
+                                        propagate_time = time.time() - propagate_start
+                                        try:
+                                            device_identifier = await sync_to_async(lambda pp: getattr(getattr(pp, 'device_property', None).device, 'identifier', None))(p)
+                                        except Exception:
+                                            device_identifier = None
+                                        try:
+                                            dt_id = await sync_to_async(lambda pp: getattr(pp, 'dtinstance', None).id)(p)
+                                        except Exception:
+                                            dt_id = None
+                                        print(f"[{datetime.now().isoformat()}] ❌ Propagation failed for '{prop_name}' after {propagate_time:.3f}s (final_status={status_code})")
+                                        print(f"[{datetime.now().isoformat()}] RPC_RESULT success=0 tb_id={device_identifier} dt_id={dt_id} prop={prop_name} time={propagate_time:.6f} status={status_code} attempts={max_attempts}")
+                                        return (False, propagate_time)
+
+                                    except Exception as e:
+                                        if attempt < max_attempts:
+                                            print(f"[{datetime.now().isoformat()}] 🔄 COMMAND-RETRY {attempt}/{max_attempts-1} for '{prop_name}' due exception: {str(e)[:120]}")
+                                            await asyncio.sleep(0.05 * attempt)
+                                            continue
+
+                                        propagate_time = time.time() - propagate_start
+                                        # Non-fatal: log to stdout so we have visibility in container logs
+                                        try:
+                                            device_identifier = await sync_to_async(lambda pp: getattr(getattr(pp, 'device_property', None).device, 'identifier', None))(p)
+                                        except Exception:
+                                            device_identifier = None
+                                        try:
+                                            dt_id = await sync_to_async(lambda pp: getattr(pp, 'dtinstance', None).id)(p)
+                                        except Exception:
+                                            dt_id = None
+                                        print(f"[{datetime.now().isoformat()}] ❌ Error propagating causal property '{prop_name}' after {propagate_time:.3f}s: {e}")
+                                        # sanitize error for single-line logging
+                                        err_str = str(e).replace('\n', ' ').replace('"', '\\"')
+                                        print(f"[{datetime.now().isoformat()}] RPC_RESULT success=0 tb_id={device_identifier} dt_id={dt_id} prop={prop_name} time={propagate_time:.6f} error={err_str} status={last_status}")
+                                        return (False, propagate_time)
 
                             # Schedule background propagation and continue immediately
                             try:
-                                propagation_task = asyncio.create_task(_propagate(prop))
+                                propagation_task = asyncio.create_task(_propagate(prop, correlation_id, new_value, max_attempts=1))
                                 # Don't await here - let it run in background
                                 print(f"[{datetime.now().isoformat()}] 📤 Scheduled background propagation for '{property_name}'")
                             except RuntimeError:
@@ -250,7 +340,7 @@ class Command(BaseCommand):
                                 fallback_start = time.time()
                                 print(f"[{datetime.now().isoformat()}] 🔄 Using fallback synchronous propagation for '{property_name}'")
                                 try:
-                                    prop.save(propagate_to_device=True)
+                                    prop.save(propagate_to_device=True, correlation_id=correlation_id)
                                     fallback_time = time.time() - fallback_start
                                     print(f"[{datetime.now().isoformat()}] ✅ Fallback propagation completed for '{property_name}' in {fallback_time:.3f}s")
                                 except Exception as e:
@@ -269,7 +359,7 @@ class Command(BaseCommand):
 
                 cycle_time = time.time() - cycle_start
                 print(f"[{datetime.now().isoformat()}] 🏁 Cycle #{cycle_count} completed: {total_properties_updated} properties updated in {cycle_time:.3f}s")
-                print(f"[{datetime.now().isoformat()}] 💤 Sleeping for 5 seconds...")
+                print(f"[{datetime.now().isoformat()}] 💤 Sleeping for {interval} seconds...")
                 
             except Exception as e:
                 cycle_time = time.time() - cycle_start
@@ -277,7 +367,7 @@ class Command(BaseCommand):
                 import traceback
                 traceback.print_exc()
 
-            await asyncio.sleep(5)
+            await asyncio.sleep(interval)
 
     def get_dt_ids_from_thingsboard_ids(self, thingsboard_ids):
         """

@@ -347,7 +347,7 @@ class Command(BaseCommand):
                         dtinstance__active=True
                     ).update)(value=valor)
                     
-                    if self.use_influxdb:
+                    if USE_INFLUX_TO_EVALUATE and INFLUXDB_TOKEN:
                         timestamp = int(time.time() * 1000)
                         property = await sync_to_async(lambda: Property.objects.filter(device=device, name=key).first())()
                         # Do not append _i to the key. Force integer types for Boolean/Integer properties
@@ -381,20 +381,25 @@ class Command(BaseCommand):
                         # Prefer ThingsBoard internal id (thingsboard_id) when available to avoid
                         # conflicts with friendly names. Fall back to device.identifier.
                         sensor_id = device.identifier
-                        tags = {"sensor": sensor_id, "source": "middts"}
+                        tags = {"sensor": sensor_id, "source": "middts", "direction": "S2M"}
                         # Ensure numeric types for booleans/ints; send explicit integer suffix for status-like fields
                         if key.lower() in ('status', 'active'):
-                            # send as float 1.0/0.0 to avoid Influx integer/float conflicts
-                            try:
-                                pv = float(property_value)
-                            except Exception:
-                                pv = 1.0 if int(property_value) else 0.0
+                            normalized = str(property_value).strip().lower() if property_value is not None else ''
+                            if normalized in ('1', '1.0', 'true', 'yes', 'on'):
+                                pv = 1.0
+                            elif normalized in ('0', '0.0', 'false', 'no', 'off', ''):
+                                pv = 0.0
+                            else:
+                                try:
+                                    pv = 1.0 if float(property_value) != 0.0 else 0.0
+                                except Exception:
+                                    pv = 0.0
                             fields = {key: pv, "received_timestamp": timestamp}
                         else:
                             fields = {key: property_value, "received_timestamp": timestamp}
                         data = format_influx_line("device_data", tags, fields, timestamp=timestamp)
                         logger.debug(f"Posting to InfluxDB (middts listener): {data}")
-                        response = requests.post(INFLUXDB_URL, headers=headers, data=data)
+                        response = requests.post(INFLUXDB_URL, headers=headers, data=data, timeout=1.0)
                         logger.info(f"Response Code: {response.status_code}, Response Text: {response.text} - Data Sent: {data}")
                         logger.info(f"Updated property for {device.name} - {key}: {valor} and sent to InfluxDB with received_timestamp")
 

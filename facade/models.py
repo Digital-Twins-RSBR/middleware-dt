@@ -217,16 +217,14 @@ class Property(models.Model):
     def __str__(self):
         return f'{self.name} - {self.device}'
     
-    def write_influx(self):
-        timestamp = int(time.time() * 1000)  #
+    def write_influx(self, request_id=None, measurement="device_data", extra_fields=None):
+        timestamp = int(time.time() * 1000)
         headers = {
-                "Authorization": f"Token {INFLUXDB_TOKEN}",
-                "Content-Type": "text/plain"
-            }
-        # Envia os dados para o InfluxDB registrando o evento
+            "Authorization": f"Token {INFLUXDB_TOKEN}",
+            "Content-Type": "text/plain"
+        }
         key = self.name
         valor = self.get_value()
-        # Normalize boolean/integer values to numeric floats to avoid Influx type conflicts
         if self.type == 'Boolean' or self.type == 'Integer':
             try:
                 ival = int(valor)
@@ -238,16 +236,95 @@ class Property(models.Model):
                         ival = int(float(valor))
                     except Exception:
                         ival = 0
-            # Use float representation (e.g., 1.0) to maintain consistent field type
             valor = float(ival)
-        # Prefer ThingsBoard internal id (thingsboard_id) when available to avoid conflicts
         sensor_id = self.device.identifier
-        tags = {"sensor": sensor_id, "source": "middts", "direction": "S2M"}
-        # S2M: Middleware RECEBEU dados - usar received_timestamp
+        # Propagação robusta do request_id
+        if request_id is None:
+            # Tenta obter do contexto salvo
+            if hasattr(self, 'last_payload') and isinstance(self.last_payload, dict):
+                request_id = self.last_payload.get('request_id')
+            if request_id is None and hasattr(self, 'request_id'):
+                request_id = getattr(self, 'request_id')
+        tags = {"sensor": sensor_id, "source": "middts", "direction": "S2M" if measurement=="device_data" else "M2S"}
+
+        correlation_id = None
+        sent_timestamp = None
+        normalized_request_id = request_id
+        if isinstance(request_id, (list, tuple)) and len(request_id) >= 2:
+            try:
+                sent_timestamp = int(request_id[0])
+            except Exception:
+                sent_timestamp = None
+            correlation_id = str(request_id[1])
+            normalized_request_id = correlation_id
+        elif isinstance(request_id, str) and request_id.startswith('[') and ',' in request_id:
+            # Best-effort parsing for stringified legacy format: [timestamp, 'uuid']
+            try:
+                parts = request_id.strip('[]').split(',', 1)
+                sent_timestamp = int(parts[0].strip())
+                correlation_id = parts[1].strip().strip("'\"")
+                normalized_request_id = correlation_id
+            except Exception:
+                pass
+
+        if normalized_request_id:
+            # Always set tags to maintain CSV column consistency
+            tags["request_id"] = str(normalized_request_id)
+        else:
+            tags["request_id"] = ""
+        
+        if correlation_id:
+            tags["correlation_id"] = correlation_id
+        else:
+            tags["correlation_id"] = ""
+
         fields = {key: valor, "received_timestamp": timestamp}
-        data = format_influx_line("device_data", tags, fields, timestamp=timestamp)
+        if sent_timestamp:
+            fields["sent_timestamp"] = sent_timestamp
+        if extra_fields:
+            fields.update(extra_fields)
+        data = format_influx_line(measurement, tags, fields, timestamp=timestamp)
         response = requests.post(INFLUXDB_URL, headers=headers, data=data)
         print(f"Response Code: {response.status_code}, Response Text: {response.text} - Data Sent: {data}")
+
+    def write_latency_received(self, request_id=None, correlation_id=None):
+        """Registra received_timestamp em latency_measurement (M2S) para pareamento de latência."""
+        timestamp = int(time.time() * 1000)
+        sensor_id = self.device.identifier
+        tags = {"sensor": sensor_id, "source": "middts", "direction": "M2S"}
+        
+        # Prefer correlation_id over request_id for end-to-end tracing
+        if correlation_id:
+            tags["correlation_id"] = str(correlation_id)  # format_influx_line handles escaping
+        elif request_id is None:
+            if hasattr(self, 'last_payload') and isinstance(self.last_payload, dict):
+                request_id = self.last_payload.get('request_id')
+            if request_id is None and hasattr(self, 'request_id'):
+                request_id = getattr(self, 'request_id')
+            if request_id:
+                tags["request_id"] = str(request_id)
+        elif request_id:
+            tags["request_id"] = str(request_id)
+        
+        # Convert value to float to avoid InfluxDB field type conflicts
+        value = self.get_value()
+        if self.type == 'Boolean' or self.type == 'Integer':
+            try:
+                ival = int(value)
+            except Exception:
+                if self.type == 'Boolean':
+                    ival = 1 if str(value).lower() in ('true', '1', 'yes') else 0
+                else:
+                    try:
+                        ival = int(float(value))
+                    except Exception:
+                        ival = 0
+            value = float(ival)
+        
+        fields = {self.name: value, "received_timestamp": timestamp}
+        data = format_influx_line("latency_measurement", tags, fields, timestamp=timestamp)
+        response = requests.post(INFLUXDB_URL, headers={"Authorization": f"Token {INFLUXDB_TOKEN}", "Content-Type": "text/plain"}, data=data)
+        print(f"[M2S-RECEIVED] Logged received_timestamp for {sensor_id} (correlation_id={correlation_id}): {response.status_code}")
     
     def save(self, *args, **kwargs):
         import time
@@ -258,6 +335,14 @@ class Property(models.Model):
         device_name = getattr(self.device, 'name', 'unknown') if hasattr(self, 'device') and self.device else 'no_device'
         print(f"[{datetime.now().isoformat()}] 🏭 DEVICE PROPERTY SAVE START: '{property_name}' on device '{device_name}'")
         
+        # Extract correlation_id from kwargs for end-to-end tracing
+        correlation_id = kwargs.pop('correlation_id', None)
+        # If True, sent_timestamp was already logged upstream (avoid duplicate write)
+        self.m2s_sent_logged = bool(kwargs.pop('m2s_sent_logged', False))
+        if correlation_id:
+            print(f"[DEBUG] Setting self.correlation_id = {correlation_id} (type: {type(correlation_id)})")
+            self.correlation_id = correlation_id  # Store for RPC layer
+        
         old_value = ''
         if self.id:
             old_value_start = time.time()
@@ -267,6 +352,7 @@ class Property(models.Model):
         
         success = False
         rpc_time = 0
+        response = None
         if self.rpc_write_method:
             rpc_start = time.time()
             print(f"[{datetime.now().isoformat()}] 📡 Starting RPC call for '{property_name}' using method '{self.rpc_write_method}'")
@@ -297,9 +383,18 @@ class Property(models.Model):
         if success and USE_INFLUX_TO_EVALUATE and INFLUXDB_TOKEN:
             influx_start = time.time()
             print(f"[{datetime.now().isoformat()}] 📈 Writing to InfluxDB for '{property_name}'")
-            self.write_influx()
+            # Extrai o request_id do contexto, se disponível
+            request_id = None
+            if hasattr(self, 'last_payload') and isinstance(self.last_payload, dict):
+                request_id = self.last_payload.get('request_id')
+            if request_id is None and hasattr(self, 'request_id'):
+                request_id = getattr(self, 'request_id')
+            self.write_influx(request_id=request_id)
+            # Também registra received_timestamp em latency_measurement (M2S) para pareamento
+            # Use correlation_id for end-to-end tracing if available
+            self.write_latency_received(request_id=request_id, correlation_id=correlation_id)
             influx_time = time.time() - influx_start
-            print(f"[{datetime.now().isoformat()}] 📈 InfluxDB write for '{property_name}' completed in {influx_time:.3f}s")
+            print(f"[{datetime.now().isoformat()}] 📈 InfluxDB write para '{property_name}' e latency_measurement completed in {influx_time:.3f}s")
         
         total_save_time = time.time() - save_start
         print(f"[{datetime.now().isoformat()}] 🏭 DEVICE PROPERTY SAVE COMPLETE: '{property_name}' total time: {total_save_time:.3f}s (rpc: {rpc_time:.3f}s, value_proc: {value_processing_time:.3f}s, db_save: {db_save_time:.3f}s, influx: {influx_time:.3f}s)")
@@ -308,7 +403,11 @@ class Property(models.Model):
         if total_save_time > 2.0:
             print(f"[{datetime.now().isoformat()}] 🐌 SLOW DEVICE SAVE WARNING: Property '{property_name}' took {total_save_time:.3f}s (threshold: 2.0s)")
         if rpc_time > 1.0:
-            print(f"[{datetime.now().isoformat()}] 🐌 SLOW RPC WARNING: Property '{property_name}' RPC took {rpc_time:.3f}s (threshold: 1.0s)")    #Para leitura, seria necessário criar um mecanismos no middleware para chamar de forma assincrona esse método de todas as instâncias
+            print(f"[{datetime.now().isoformat()}] 🐌 SLOW RPC WARNING: Property '{property_name}' RPC took {rpc_time:.3f}s (threshold: 1.0s)")
+
+        return response
+
+    #Para leitura, seria necessário criar um mecanismos no middleware para chamar de forma assincrona esse método de todas as instâncias
     def call_rpc(self,rpc_type:RPCCallTypes):
         """Ultra-fast RPC with 200ms timeout and immediate fallback"""
         import time
@@ -339,43 +438,90 @@ class Property(models.Model):
             "X-Authorization": f"Bearer {token}",
         }
         
-        # Ultra-URLLC with 3 aggressive retries for max reliability
+        # Helper function to serialize Decimal and other non-JSON types
+        def json_serialize_value(value):
+            """Convert Decimal and other non-JSON types to JSON-serializable format"""
+            from decimal import Decimal
+            if isinstance(value, Decimal):
+                return float(value)
+            elif isinstance(value, dict):
+                return {k: json_serialize_value(v) for k, v in value.items()}
+            elif isinstance(value, (list, tuple)):
+                return [json_serialize_value(item) for item in value]
+            return value
+        
+        # Adaptive RPC timeout based on network profile
         import time
+        import os
+        
+        # Read network profile from environment (set by topology script)
+        network_profile = os.getenv('NETWORK_PROFILE', 'urllc').lower()
+        m2s_perf_mode = os.getenv('M2S_PERF_MODE', '0').lower() in ('1', 'true', 'yes')
+        m2s_perf_timestamps_only = os.getenv('M2S_PERF_TIMESTAMPS_ONLY', '0').lower() in ('1', 'true', 'yes')
+        m2s_perf_full = os.getenv('M2S_PERF_FULL', '0').lower() in ('1', 'true', 'yes')
+        disable_hotpath_influx = os.getenv('M2S_DISABLE_RPC_INFLUX_HOTPATH', '0').lower() in ('1', 'true', 'yes') or m2s_perf_full
+        
+        # Adaptive timeout configuration per profile
+        # Values consider: network RTT (2 × delay) + ThingsBoard processing overhead (~100ms) + safety margin
+        TIMEOUT_CONFIG = {
+            'urllc': 0.30,       # 300ms - keep high throughput; eventual delivery is measured separately
+            'embb': 0.50,        # 500ms - RTT ~50ms + TB processing + margin
+            'best_effort': 1.00  # 1000ms - RTT ~100ms + TB processing + generous margin
+        }
+        RETRY_CONFIG = {
+            'urllc': 1,          # 1 retry - avoid throughput collapse under contention
+            'embb': 3,           # 3 retries - standard
+            'best_effort': 2,    # 2 retries - less aggressive, accepts loss
+        }
+
+        if m2s_perf_mode:
+            # Benchmark mode: prioritize low M2S latency over eventual delivery rate
+            TIMEOUT_CONFIG['urllc'] = float(os.getenv('M2S_URLLC_TIMEOUT_S', '0.22'))
+            RETRY_CONFIG['urllc'] = int(os.getenv('M2S_URLLC_RETRIES', '0'))
+        
         retry_count = 0
-        max_retries = 3  # Three quick retries for max delivery
-        base_timeout = 0.1  # 100ms - fail fast on each attempt
+        max_retries = RETRY_CONFIG.get(network_profile, 2)
+        base_timeout = TIMEOUT_CONFIG.get(network_profile, 0.18)
         
         while retry_count <= max_retries:
             try:
                 from facade.utils import get_session_for_gateway
                 session = get_session_for_gateway(gateway.id)
                 
-                # Same timeout for all retries - fail fast
-                current_timeout = base_timeout
+                # Progressive timeout per retry to absorb transient backend slowness
+                current_timeout = min(base_timeout * (1 + 0.35 * retry_count), base_timeout + 0.60)
                 
                 if rpc_type.name == 'WRITE' and self.rpc_write_method:
                     print(f"[{datetime.now().isoformat()}] ⚡ ULTRA-WRITE (try {retry_count+1}): {self.rpc_write_method}={self.get_value()}")
                     
                     # M2S TIMESTAMP: Register when middleware SENDS to simulator
-                    if retry_count == 0:  # Only on first try
-                        try:
-                            self._write_m2s_sent_timestamp()
-                        except Exception as e:
-                            print(f"[{datetime.now().isoformat()}] ⚠️ M2S InfluxDB: {e}")
-                        
-                        try:
-                            self._write_influx_fast()
-                        except Exception as e:
-                            print(f"[{datetime.now().isoformat()}] ⚠️ InfluxDB: {e}")
+                    if retry_count == 0 and not disable_hotpath_influx:  # Only on first try
+                        if not getattr(self, 'm2s_sent_logged', False):
+                            try:
+                                self._write_m2s_sent_timestamp()
+                            except Exception as e:
+                                print(f"[{datetime.now().isoformat()}] ⚠️ M2S InfluxDB: {e}")
+                        else:
+                            print(f"[{datetime.now().isoformat()}] ℹ️ M2S sent_timestamp already logged upstream; skipping duplicate write")
+
+                        if not m2s_perf_timestamps_only:
+                            try:
+                                self._write_influx_fast()
+                            except Exception as e:
+                                print(f"[{datetime.now().isoformat()}] ⚠️ InfluxDB: {e}")
+                    
+                    # Serialize value to JSON-compatible format (convert Decimal, etc)
+                    serialized_params = json_serialize_value(self.get_value())
                     
                     response = session.post(
                         urltwoway,
-                        json={"method": self.rpc_write_method, "params": self.get_value()},
+                        json={"method": self.rpc_write_method, "params": serialized_params},
                         headers=headers,
                         timeout=current_timeout
                     )
                 elif rpc_type.name == 'READ' and self.rpc_read_method:
-                    print(f"[{datetime.now().isoformat()}] ⚡ ULTRA-READ (try {retry_count+1}): {self.rpc_read_method}")
+                    if retry_count == 0:
+                        print(f"[{datetime.now().isoformat()}] ⚡ ULTRA-READ: {self.rpc_read_method}")
                     response = session.post(
                         urltwoway,
                         json={"method": self.rpc_read_method},
@@ -386,7 +532,29 @@ class Property(models.Model):
                     return self._create_mock_response()
                 
                 elapsed = time.time() - start_time
-                print(f"[{datetime.now().isoformat()}] ✅ ULTRA-RPC SUCCESS in {elapsed:.3f}s (try {retry_count+1})")
+                if response.status_code == 200:
+                    if retry_count > 0:
+                        print(f"[{datetime.now().isoformat()}] ✅ ULTRA-RPC SUCCESS in {elapsed:.3f}s after {retry_count} retry(ies)")
+                    elif elapsed > base_timeout * 0.8:
+                        # Log successful but slow requests (>80% of timeout) for monitoring
+                        print(f"[{datetime.now().isoformat()}] ⚡ ULTRA-RPC SUCCESS in {elapsed:.3f}s (close to timeout={base_timeout:.2f}s)")
+                    return response
+
+                retryable_status = {408, 429, 500, 502, 503, 504}
+                if response.status_code in retryable_status and retry_count < max_retries:
+                    retry_count += 1
+                    print(
+                        f"[{datetime.now().isoformat()}] 🔄 ULTRA-RPC RETRY {retry_count}/{max_retries} "
+                        f"after HTTP {response.status_code} in {elapsed:.3f}s"
+                    )
+                    backoff = 0.02 * (2 ** (retry_count - 1))
+                    time.sleep(min(0.12, backoff))
+                    continue
+
+                print(
+                    f"[{datetime.now().isoformat()}] ❌ ULTRA-RPC NON-RETRYABLE/FINAL HTTP "
+                    f"{response.status_code} after {elapsed:.3f}s"
+                )
                 return response
                 
             except Exception as e:
@@ -394,13 +562,17 @@ class Property(models.Model):
                 elapsed = time.time() - start_time
                 
                 if retry_count <= max_retries:
-                    print(f"[{datetime.now().isoformat()}] 🔄 ULTRA-RPC RETRY {retry_count} in {elapsed:.3f}s: {str(e)[:50]}...")
-                    # No sleep - immediate retry for ultra-low latency
+                    print(f"[{datetime.now().isoformat()}] 🔄 ULTRA-RPC RETRY {retry_count}/{max_retries} after {elapsed:.3f}s (timeout={base_timeout:.2f}s): {str(e)[:100]}")
+                    # Exponential backoff: 20ms, 40ms, 80ms for retries 1, 2, 3
+                    backoff = 0.02 * (2 ** (retry_count - 1))
+                    time.sleep(min(0.10, backoff))
+                    print(f"[{datetime.now().isoformat()}] 💤 Retry backoff: {backoff*1000:.0f}ms")
                 else:
-                    print(f"[{datetime.now().isoformat()}] ⚡ ULTRA-RPC FALLBACK after {elapsed:.3f}s: {str(e)[:50]}...")
-                    return self._create_mock_response()
+                    print(f"[{datetime.now().isoformat()}] ❌ ULTRA-RPC FAILED after {max_retries} retries in {elapsed:.3f}s: {str(e)[:100]}")
+                    print(f"[{datetime.now().isoformat()}] 🔻 FALLBACK: Returning mock 504 response")
+                    return self._create_mock_response(status_code=504)
 
-    def _create_mock_response(self, status_code=200):
+    def _create_mock_response(self, status_code=504):
         """Create a mock response for fallback/oneway scenarios"""
         class MockResponse:
             def __init__(self, prop, status_code):
@@ -431,6 +603,14 @@ class Property(models.Model):
                 "source": "middts",
                 "direction": "M2S"
             }
+            
+            # Use correlation_id if available for end-to-end tracing
+            correlation_id = getattr(self, 'correlation_id', None)
+            if isinstance(correlation_id, (list, tuple)):
+                correlation_id = str(correlation_id[1]) if len(correlation_id) > 1 else str(correlation_id[0])
+            if correlation_id:
+                tags["correlation_id"] = f'"{correlation_id}"'
+            
             fields = {"sent_timestamp": sent_ts}
             
             from facade.utils import format_influx_line
@@ -459,7 +639,7 @@ class Property(models.Model):
             
             send_ts = int(time.time() * 1000)
             sensor_id = self.device.identifier
-            tags = {"sensor": sensor_id, "source": "middts"}
+            tags = {"sensor": sensor_id, "source": "middts", "direction": "M2S"}
             
             field_value = self.get_value()
             if self.type in ['Boolean', 'Integer']:
@@ -487,24 +667,31 @@ class Property(models.Model):
             from datetime import datetime
             print(f"[{datetime.now().isoformat()}] 📈 InfluxDB failed: {e}")
     
-    def _write_m2s_sent_timestamp(self):
+    def _write_influx_m2s_sent_with_correlation(self):
         """Write M2S sent timestamp when middleware sends RPC to device"""
         try:
             import time
             from datetime import datetime
-            
             if not (USE_INFLUX_TO_EVALUATE and INFLUXDB_TOKEN):
                 return
-            
             sent_timestamp = int(time.time() * 1000)
             sensor_id = self.device.identifier
             
             tags = {"sensor": sensor_id, "source": "middts", "direction": "M2S"}
-            fields = {"sent_timestamp": sent_timestamp}
             
+            # Prefer correlation_id for end-to-end tracing
+            correlation_id = getattr(self, 'correlation_id', None)
+            request_id = getattr(self, 'request_id', None)
+            if correlation_id:
+                tags["correlation_id"] = f'"{correlation_id}"'
+            else:
+                # Fallback to request_id for backward compatibility
+                if request_id:
+                    tags["request_id"] = str(request_id)
+            
+            fields = {"sent_timestamp": sent_timestamp}
             from facade.utils import format_influx_line
             data = format_influx_line("latency_measurement", tags, fields, timestamp=sent_timestamp)
-            
             import requests
             requests.post(
                 INFLUXDB_URL,
@@ -512,7 +699,7 @@ class Property(models.Model):
                 data=data,
                 timeout=0.5
             )
-            print(f"[{datetime.now().isoformat()}] 📡 M2S sent_timestamp: {sent_timestamp} for {sensor_id}")
+            print(f"[{datetime.now().isoformat()}] 📡 M2S sent_timestamp: {sent_timestamp} for {sensor_id} request_id={request_id}")
         except Exception as e:
             from datetime import datetime
             print(f"[{datetime.now().isoformat()}] 📡 M2S timestamp failed: {e}")

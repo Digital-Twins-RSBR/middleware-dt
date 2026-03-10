@@ -21,6 +21,7 @@ def list_devices(request):
 
 @router.post("/devices/{device_id}/rpc/", response={200: dict}, tags=['Facade'])
 def call_device_rpc(request, device_id: int, payload: DeviceRPCView):
+    import uuid
     device = get_object_or_404(Device, id=device_id)
     gateway = device.gateway
     url = f"{gateway.url}/api/plugins/rpc/oneway/{device.identifier}"
@@ -28,9 +29,17 @@ def call_device_rpc(request, device_id: int, payload: DeviceRPCView):
         "Content-Type": "application/json",
         "X-Authorization": f"Bearer {gateway.password}",
     }
+    # Gerar request_id único
+    request_id = str(uuid.uuid4())
+    # Incluir request_id no payload.params
+    params = dict(payload.params) if payload.params else {}
+    params["request_id"] = request_id
+    # Chamar o RPC com request_id propagado
     response = requests.post(
-        url, json={"method": payload.method, "params": payload.params}, headers=headers
+        url, json={"method": payload.method, "params": params}, headers=headers
     )
+    # Atribuir request_id ao device para uso posterior (ex: gravação sent_timestamp)
+    setattr(device, 'request_id', request_id)
     if response.status_code == 200:
         return response.json()
     return api.create_response(request, response.json(), status=response.status_code)

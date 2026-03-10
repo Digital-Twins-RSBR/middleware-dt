@@ -132,9 +132,12 @@ class URLLCRedisSessionManager:
             
             # URLLC-specific configuration with extreme connection limiting
             retries = Retry(
-                total=1,                    # Only 1 retry for speed
-                backoff_factor=0.01,       # 10ms backoff
-                status_forcelist=(502, 503, 504),
+                total=0,                    # Disable urllib3 retries; retry policy is handled in call_rpc
+                connect=0,
+                read=0,
+                redirect=0,
+                status=0,
+                backoff_factor=0,
                 allowed_methods=frozenset(['GET', 'POST'])
             )
             
@@ -236,9 +239,12 @@ class URLLCSessionManager:
                 
                 # URLLC-specific retry policy: fast fail for low latency
                 retries = Retry(
-                    total=1,                    # Only 1 retry for speed
-                    backoff_factor=0.01,       # 10ms backoff
-                    status_forcelist=(502, 503, 504),
+                    total=0,                    # Disable urllib3 retries; retry policy is handled in call_rpc
+                    connect=0,
+                    read=0,
+                    redirect=0,
+                    status=0,
+                    backoff_factor=0,
                     allowed_methods=frozenset(['GET', 'POST'])
                 )
                 

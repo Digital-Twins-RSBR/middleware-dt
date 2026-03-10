@@ -159,10 +159,17 @@ INFLUXDB_PORT = int(os.getenv("INFLUXDB_PORT", 8086))
 INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "iot_data")
 INFLUXDB_ORGANIZATION = os.getenv("INFLUXDB_ORGANIZATION", "middts")
 INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN", "xxx")
-USE_INFLUX_TO_EVALUATE = os.getenv("USE_INFLUX_TO_EVALUATE", True)
+
+
+def _env_bool(name, default=False):
+    return str(os.getenv(name, str(default))).strip().lower() in ("1", "true", "yes", "on")
+
+
+USE_INFLUX_TO_EVALUATE = _env_bool("USE_INFLUX_TO_EVALUATE", True)
+ENABLE_INFLUX_LATENCY_MEASUREMENTS = _env_bool("ENABLE_INFLUX_LATENCY_MEASUREMENTS", False)
 
 # Digital Twin Settings
 DEFAULT_INACTIVITY_TIMEOUT = 60
 # Controla integração com Neo4j. Por padrão desabilitado para evitar tentativas
 # de conexão em ambientes que não têm Neo4j disponível.
-USE_NEO4J = os.getenv('USE_NEO4J', 'False').lower() in ('1', 'true', 'yes', 'on')
+USE_NEO4J = _env_bool('USE_NEO4J', False)

@@ -137,6 +137,7 @@ class DigitalTwinInstanceRelationshipSchema(Schema):
 
 class DigitalTwinPropertyUpdateSchema(Schema):
     value: Any
+    correlation_id: str = None  # Optional correlation_id for end-to-end tracing
 
     
 class DTDLModelBatchSchema(Schema):
