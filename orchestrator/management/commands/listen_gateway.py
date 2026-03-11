@@ -22,6 +22,7 @@ THINGSBOARD_WS_URL_TEMPLATE = "ws://{thingsboard_server}/api/ws/plugins/telemetr
 INFLUXDB_URL = f"http://{settings.INFLUXDB_HOST}:{settings.INFLUXDB_PORT}/api/v2/write?org={settings.INFLUXDB_ORGANIZATION}&bucket={settings.INFLUXDB_BUCKET}&precision=ms"
 INFLUXDB_TOKEN = settings.INFLUXDB_TOKEN
 USE_INFLUX_TO_EVALUATE = settings.USE_INFLUX_TO_EVALUATE
+INFLUX_WRITE_TIMEOUT = float(getattr(settings, 'INFLUX_WRITE_TIMEOUT', 0.2))
 
 headers = {
     "Authorization": f"Token {INFLUXDB_TOKEN}",
@@ -34,6 +35,7 @@ class Command(BaseCommand):
     def __init__(self):
         super().__init__()
         self.active_tasks = {}  # Armazena tarefas ativas por device_id
+        self.use_influxdb = bool(USE_INFLUX_TO_EVALUATE)
         # Failure counters and last-log timestamps to throttle noisy errors
         self.failure_counts = defaultdict(int)
         self.last_log_at = defaultdict(lambda: 0.0)
@@ -347,7 +349,7 @@ class Command(BaseCommand):
                         dtinstance__active=True
                     ).update)(value=valor)
                     
-                    if USE_INFLUX_TO_EVALUATE and INFLUXDB_TOKEN:
+                    if self.use_influxdb and INFLUXDB_TOKEN:
                         timestamp = int(time.time() * 1000)
                         property = await sync_to_async(lambda: Property.objects.filter(device=device, name=key).first())()
                         # Do not append _i to the key. Force integer types for Boolean/Integer properties
@@ -399,8 +401,14 @@ class Command(BaseCommand):
                             fields = {key: property_value, "received_timestamp": timestamp}
                         data = format_influx_line("device_data", tags, fields, timestamp=timestamp)
                         logger.debug(f"Posting to InfluxDB (middts listener): {data}")
-                        response = requests.post(INFLUXDB_URL, headers=headers, data=data, timeout=1.0)
-                        logger.info(f"Response Code: {response.status_code}, Response Text: {response.text} - Data Sent: {data}")
+                        response = await asyncio.to_thread(
+                            requests.post,
+                            INFLUXDB_URL,
+                            headers=headers,
+                            data=data,
+                            timeout=INFLUX_WRITE_TIMEOUT,
+                        )
+                        logger.debug(f"Response Code: {response.status_code}, Response Text: {response.text} - Data Sent: {data}")
                         logger.info(f"Updated property for {device.name} - {key}: {valor} and sent to InfluxDB with received_timestamp")
 
                 except Exception as e:
