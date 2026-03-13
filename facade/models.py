@@ -418,6 +418,8 @@ class Property(models.Model):
         device = self.device
         gateway = device.gateway
         start_time = time.time()
+        correlation_id = getattr(self, 'correlation_id', None)
+        property_name = getattr(self, 'name', 'unknown')
         
         # Fast JWT fetch with error handling
         try:
@@ -512,6 +514,12 @@ class Property(models.Model):
                     
                     # Serialize value to JSON-compatible format (convert Decimal, etc)
                     serialized_params = json_serialize_value(self.get_value())
+                    print(
+                        f"[{datetime.now().isoformat()}] [M2S-RPC] OUTBOUND "
+                        f"device={self.device.identifier} property={property_name} method={self.rpc_write_method} "
+                        f"params={serialized_params} timeout={current_timeout:.3f}s retry={retry_count} "
+                        f"corr={correlation_id}"
+                    )
                     
                     response = session.post(
                         urltwoway,
@@ -532,6 +540,16 @@ class Property(models.Model):
                     return self._create_mock_response()
                 
                 elapsed = time.time() - start_time
+                try:
+                    response_text = (response.text or '')[:180]
+                except Exception:
+                    response_text = '<unavailable>'
+                print(
+                    f"[{datetime.now().isoformat()}] [M2S-RPC] INBOUND "
+                    f"device={self.device.identifier} property={property_name} method={self.rpc_write_method or self.rpc_read_method} "
+                    f"status={response.status_code} elapsed={elapsed:.3f}s retry={retry_count} corr={correlation_id} "
+                    f"body={response_text}"
+                )
                 if response.status_code == 200:
                     if retry_count > 0:
                         print(f"[{datetime.now().isoformat()}] ✅ ULTRA-RPC SUCCESS in {elapsed:.3f}s after {retry_count} retry(ies)")
@@ -560,6 +578,11 @@ class Property(models.Model):
             except Exception as e:
                 retry_count += 1
                 elapsed = time.time() - start_time
+                print(
+                    f"[{datetime.now().isoformat()}] [M2S-RPC] EXCEPTION "
+                    f"device={self.device.identifier} property={property_name} method={self.rpc_write_method or self.rpc_read_method} "
+                    f"elapsed={elapsed:.3f}s retry={retry_count-1} corr={correlation_id} err={str(e)[:180]}"
+                )
                 
                 if retry_count <= max_retries:
                     print(f"[{datetime.now().isoformat()}] 🔄 ULTRA-RPC RETRY {retry_count}/{max_retries} after {elapsed:.3f}s (timeout={base_timeout:.2f}s): {str(e)[:100]}")
