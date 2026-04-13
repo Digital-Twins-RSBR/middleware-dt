@@ -260,6 +260,18 @@ Se estiver em WSL e o usuário não estiver no grupo `docker`, rode com `sudo`.
 cp .env.example .env
 ```
 
+Se quiser rodar em um comando so, sem criar `.env` manualmente:
+
+```bash
+[ -f .env ] || cp .env.example .env; docker compose up -d --build
+```
+
+Com simulador:
+
+```bash
+[ -f .env ] || cp .env.example .env; docker compose --profile simulator up -d --build
+```
+
 Variáveis principais (já com defaults úteis no `.env.example`):
 
 - Portas:
@@ -274,6 +286,14 @@ Variáveis principais (já com defaults úteis no `.env.example`):
   - `MIDDLEWARE_TB_PORT`
   - `MIDDLEWARE_TB_SCHEME`
   - `SIMULATOR_THINGSBOARD_HOST`
+
+Defaults de inicializacao automatica (primeira subida):
+
+- PostgreSQL: cria usuario `postgres` e banco `middts`.
+- Neo4j: cria autenticacao `neo4j/password`.
+- InfluxDB: cria usuario `middts`, organizacao `middts`, bucket `iot_data` e token admin.
+
+Esses valores podem ser alterados no `.env` antes da subida.
 
 ## 3. Subir os serviços
 
@@ -349,6 +369,9 @@ docker compose down
   - ajuste `DB_HOST_PORT=5433` no `.env` e suba novamente.
 - Erro de permissão no socket Docker:
   - use `sudo` nos comandos, ou adicione o usuário no grupo `docker`.
+- Mudei variáveis no `.env` e não refletiu nos serviços de banco:
+  - as configuracoes de inicializacao de Postgres/Neo4j/Influx so sao aplicadas na primeira criacao dos volumes.
+  - para reconfigurar do zero, rode `docker compose down -v` e suba novamente.
 
 ## 9. Resumo de arquitetura local
 
