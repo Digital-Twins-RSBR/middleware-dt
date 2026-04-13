@@ -1,18 +1,6 @@
 #!/bin/sh
 set -e
 
-# Inicia Redis em background para URLLC Session Manager
-echo "[entrypoint] Iniciando Redis server para URLLC Session Manager..."
-redis-server --daemonize yes --port 6379 --bind 127.0.0.1 --maxmemory 64mb --maxmemory-policy volatile-lru
-sleep 2
-
-# Verifica se Redis está rodando
-if redis-cli ping >/dev/null 2>&1; then
-    echo "[entrypoint] ✅ Redis server iniciado com sucesso"
-else
-    echo "[entrypoint] ⚠️ Redis falhou ao iniciar, continuando sem Redis"
-fi
-
 # Carrega .env se existir
 
 # Carrega .env de forma robusta, exportando cada variável
@@ -21,6 +9,28 @@ if [ -f "/middleware-dt/.env" ]; then
 	set -a
 	. /middleware-dt/.env
 	set +a
+fi
+
+# Usa Redis externo quando REDIS_HOST aponta para outro serviço;
+# caso contrário, sobe um Redis local para compatibilidade.
+REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
+REDIS_PORT="${REDIS_PORT:-6379}"
+if [ "$REDIS_HOST" = "127.0.0.1" ] || [ "$REDIS_HOST" = "localhost" ]; then
+	echo "[entrypoint] Iniciando Redis local para URLLC Session Manager..."
+	redis-server --daemonize yes --port "$REDIS_PORT" --bind 127.0.0.1 --maxmemory 64mb --maxmemory-policy volatile-lru
+	sleep 2
+	if redis-cli -h 127.0.0.1 -p "$REDIS_PORT" ping >/dev/null 2>&1; then
+		echo "[entrypoint] Redis local iniciado com sucesso"
+	else
+		echo "[entrypoint] [WARN] Redis local falhou ao iniciar, continuando sem cache Redis"
+	fi
+else
+	echo "[entrypoint] Usando Redis externo em ${REDIS_HOST}:${REDIS_PORT}"
+	if redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping >/dev/null 2>&1; then
+		echo "[entrypoint] Redis externo acessível"
+	else
+		echo "[entrypoint] [WARN] Redis externo indisponível no boot, continuando"
+	fi
 fi
 
 # Corrige DJANGO_SETTINGS_MODULE se antigo nome estiver presente
@@ -199,13 +209,14 @@ START_LISTENER_AFTER_TB="${START_LISTENER_AFTER_TB:-1}"
 START_LISTENER_TIMEOUT="${START_LISTENER_TIMEOUT:-300}"
 TB_HOST="${TB_HOST:-${THINGSBOARD_HOST:-10.0.0.2}}"
 TB_PORT="${TB_PORT:-8080}"
+TB_SCHEME="${TB_SCHEME:-http}"
 
 if [ "$START_LISTENER_AFTER_TB" = "1" ]; then
 	echo "[entrypoint] Waiting up to ${START_LISTENER_TIMEOUT}s for ThingsBoard at ${TB_HOST}:${TB_PORT} before starting listen_gateway"
 	elapsed=0
 	backoff=1
 	while [ $elapsed -lt $START_LISTENER_TIMEOUT ]; do
-		code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://${TB_HOST}:${TB_PORT}/api/auth/login" || echo 000)
+		code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${TB_SCHEME}://${TB_HOST}:${TB_PORT}/api/auth/login" || echo 000)
 		if [ "$code" != "000" ]; then
 			echo "[entrypoint] ThingsBoard HTTP responded with ${code} (ready). Starting listen_gateway."
 			break
