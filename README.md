@@ -243,128 +243,144 @@ Dispositivos com bateria limitada: 300-600 segundos
 
 
 
-# Como configurar e executar o projeto utilizando Docker Compose. 
+# Como configurar e executar com Docker Compose
 
+Este repositório (middleware-dt) e o `iot_simulator` sobem juntos pelo compose unificado.
 
+## 1. Pré-requisitos
 
-- Docker instalado ([Instruções de instalação](https://docs.docker.com/get-docker/))
-- Docker Compose instalado ([Instruções de instalação](https://docs.docker.com/compose/install/))
+- Docker instalado
+- Docker Compose v2 (`docker compose`)
 
+Se estiver em WSL e o usuário não estiver no grupo `docker`, rode com `sudo`.
 
-
-## 1. Criar o arquivo `.env`
-
-Copie o modelo:
+## 2. Criar e revisar o `.env`
 
 ```bash
 cp .env.example .env
 ```
 
-## 2. Adicionar variáveis de ambiente
-
-Edite o `.env` conforme necessário para o seu ambiente. O conteúdo mínimo recomendado:
-
-```env
-# PostgreSQL
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DB=middts
-DATABASE_URL=postgresql://postgres:postgres@db:5432/middts
-
-# Neo4j
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=password
-NEO4J_URL=neo4j:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=password
-
-# InfluxDB
-INFLUXDB_HOST=influxdb
-INFLUXDB_PORT=8086
-INFLUXDB_BUCKET=iot_data
-INFLUXDB_ORGANIZATION=middts
-INFLUXDB_TOKEN=admin_token_123
-
-# Middleware
-DEBUG=True
-ALLOWED_HOSTS=0.0.0.0,localhost,127.0.0.1
-
-```
-> [!CAUTION]
-> Para deploy em ambientes com acesso externo, você deve realizar modificações no valor das variáveis de ambiente, tanto no .env como no arquivo docker-compose.yml
-
-### 2.1. Configurações Iniciais
-
-Antes de inicializar os containers, execute os seguintes procedimentos
-
-- Crie o arquivo settings.py, com base no arquivo settings_sample.py dentro da pasta middleware-dt, referente ao projeto Django
-
-
-## 3. Iniciar os containers
-
-Execute o comando abaixo para iniciar os containers:
+Se quiser rodar em um comando so, sem criar `.env` manualmente:
 
 ```bash
-docker-compose up --build -d
+[ -f .env ] || cp .env.example .env; docker compose up -d --build
 ```
 
-Isso irá subir:
-
-- PostgreSQL (`db`)
-- Neo4j (`neo4j`)
-- Parser API (`parser`)
-- InfluxDB (`influxdb`)
-- MidDiTS (Gunicorn + Django)
-- Nginx (como proxy reverso)
-
-### 3.1 Healthcheck de dependências
-
-Após subir os serviços, execute o script:
+Com simulador:
 
 ```bash
-./healthcheck_all.sh
+[ -f .env ] || cp .env.example .env; docker compose --profile simulator up -d --build
 ```
 
-Saída esperada:
+Variáveis principais (já com defaults úteis no `.env.example`):
 
-```
-PostgreSQL: OK
-Neo4j: OK
-InfluxDB: OK
-Parser API: OK
-✅ Verificação concluída.
-```
+- Portas:
+  - `MIDDLEWARE_PORT=8000`
+  - `SIMULATOR_PORT=8001`
+  - `DB_HOST_PORT=5432` (em WSL pode ser necessário `5433` se `5432` já estiver em uso)
+- ThingsBoard:
+  - `THINGSBOARD_USER`
+  - `THINGSBOARD_PASSWORD`
+  - `MIDDLEWARE_THINGSBOARD_HOST`
+  - `MIDDLEWARE_TB_HOST`
+  - `MIDDLEWARE_TB_PORT`
+  - `MIDDLEWARE_TB_SCHEME`
+  - `SIMULATOR_THINGSBOARD_HOST`
 
-## 4. Parar os containers
+Defaults de inicializacao automatica (primeira subida):
 
-Para interromper os containers, use a combinação de teclas:
+- PostgreSQL: cria usuario `postgres` e banco `middts`.
+- Neo4j: cria autenticacao `neo4j/password`.
+- InfluxDB: cria usuario `middts`, organizacao `middts`, bucket `iot_data` e token admin.
 
-Para parar:
+Esses valores podem ser alterados no `.env` antes da subida.
+
+## 3. Subir os serviços
+
+Por padrão, o compose sobe apenas o stack principal (sem o simulador).
+
+Sem `sudo`:
 
 ```bash
-docker-compose down
+docker compose up -d --build
 ```
 
-
-## 5. Usando o MiDdiTS
-### 5.1 Criar um usuário administrador
-
-Após iniciar os containers, você pode criar um usuário administrador para o sistema com o seguinte comando:
+Com `sudo` (caso necessário no WSL):
 
 ```bash
-docker -it exec <container_middts> python manage.py createsuperuser
+sudo docker compose up -d --build
 ```
 
-### 5.2 Acessando os serviços
+Para subir tambem o simulador (profile `simulator`):
 
-- MidDiTS API: http://localhost
-- InfluxDB UI: http://localhost:8086
-- Neo4j: http://localhost:7474
-- Parser: http://localhost:8082 | Swagger: http://localhost:8082/swagger/index.html
+```bash
+docker compose --profile simulator up -d --build
+```
 
-### 5.3. Configurações no MidDits
-TODO
-### 5.4. Configurações no Thinsboard
-TODO
+ou, no WSL com `sudo`:
+
+```bash
+sudo docker compose --profile simulator up -d --build
+```
+
+## 4. Verificar status
+
+```bash
+docker compose ps
+```
+
+ou
+
+```bash
+sudo docker compose ps
+```
+
+## 5. Endpoints úteis
+
+- Middleware (Nginx): `http://localhost:8000`
+- Simulator HTTP: `http://localhost:8001`
+- InfluxDB: `http://localhost:8086`
+- Neo4j Browser: `http://localhost:7474`
+- Parser Swagger: `http://localhost:8082/swagger/index.html`
+
+Observação: `http://localhost:8082/` pode retornar `404` e isso é esperado para essa API.
+
+## 6. Logs
+
+```bash
+docker compose logs -f middleware parser
+```
+
+Com simulador ativo:
+
+```bash
+docker compose logs -f middleware simulator parser
+```
+
+## 7. Parar ambiente
+
+```bash
+docker compose down
+```
+
+## 8. Troubleshooting rápido
+
+- Erro de porta do Postgres (`address already in use` em `5432`):
+  - ajuste `DB_HOST_PORT=5433` no `.env` e suba novamente.
+- Erro de permissão no socket Docker:
+  - use `sudo` nos comandos, ou adicione o usuário no grupo `docker`.
+- Mudei variáveis no `.env` e não refletiu nos serviços de banco:
+  - as configuracoes de inicializacao de Postgres/Neo4j/Influx so sao aplicadas na primeira criacao dos volumes.
+  - para reconfigurar do zero, rode `docker compose down -v` e suba novamente.
+
+## 9. Resumo de arquitetura local
+
+- `middleware`: Django + Gunicorn (projeto principal)
+- `simulator`: worker de telemetria + servidor HTTP auxiliar
+- `db`: PostgreSQL (middleware)
+- `redis`: cache/sessões URLLC
+- `neo4j`: grafo
+- `influxdb`: série temporal
+- `parser`: API de parser DTDL
 
 
