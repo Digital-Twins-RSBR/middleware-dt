@@ -1,14 +1,23 @@
-#!/bin/sh
+#!/bin/bash
 set -e
 
 # Carrega .env se existir
 
 # Carrega .env de forma robusta, exportando cada variável
 if [ -f "/middleware-dt/.env" ]; then
-	echo "Carregando variáveis de /middleware-dt/.env"
-	set -a
-	. /middleware-dt/.env
-	set +a
+	echo "Carregando variáveis de /middleware-dt/.env (preservando variáveis já definidas)"
+	while IFS= read -r line || [ -n "$line" ]; do
+		# skip empty lines and comments
+		case "$line" in
+			''|\#*) continue ;;
+		esac
+		key=$(printf "%s" "$line" | cut -d= -f1)
+		val=$(printf "%s" "$line" | cut -d= -f2-)
+		# only export if not already set in environment
+		if [ -z "${!key}" ]; then
+			export "$key"="$val"
+		fi
+	done < /middleware-dt/.env
 fi
 
 # Usa Redis externo quando REDIS_HOST aponta para outro serviço;
@@ -118,13 +127,20 @@ fi
 export POSTGRES_HOST="$FOUND_HOST"
 echo "[db-wait] Usando POSTGRES_HOST=$POSTGRES_HOST"
 
+# Ensure psql can use the provided POSTGRES_PASSWORD non-interactively
+export PGPASSWORD="${POSTGRES_PASSWORD:-}"
+
 # --- Ensure the configured POSTGRES_DB exists; create and optionally populate from SQL
 SQL_FILE="/middleware-dt/middts.sql"
 if [ -n "$POSTGRES_DB" ]; then
 	echo "[pg-ensure] Garantindo database $POSTGRES_DB exists on $POSTGRES_HOST"
 	# Try using psql CLI if available
 	if command -v psql >/dev/null 2>&1; then
-		PSQL_CMD="psql -h $POSTGRES_HOST -U $POSTGRES_USER -p $POSTGRES_PORT -d postgres -tAc"
+		if [ -n "$POSTGRES_PASSWORD" ]; then
+			PSQL_CMD="PGPASSWORD=\"$POSTGRES_PASSWORD\" psql -h $POSTGRES_HOST -U $POSTGRES_USER -p $POSTGRES_PORT -d postgres -tAc"
+		else
+			PSQL_CMD="psql -h $POSTGRES_HOST -U $POSTGRES_USER -p $POSTGRES_PORT -d postgres -tAc"
+		fi
 		exists=$($PSQL_CMD "SELECT 1 FROM pg_database WHERE datname='$POSTGRES_DB';" 2>/dev/null | tr -d ' ')
 		if [ "$exists" != "1" ]; then
 			echo "[pg-ensure] Database $POSTGRES_DB não existe -> criando via psql"
@@ -185,6 +201,26 @@ python manage.py migrate --noinput
 
 echo "Coletando arquivos estáticos..."
 python manage.py collectstatic --noinput || true
+
+# Create Django superuser if env vars present
+if [ -n "$DJANGO_SUPERUSER_USERNAME" ] && [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then
+	echo "[entrypoint] Ensuring Django superuser $DJANGO_SUPERUSER_USERNAME exists"
+	python - <<PY
+import os
+import django
+django.setup()
+from django.contrib.auth import get_user_model
+User = get_user_model()
+username = os.getenv('DJANGO_SUPERUSER_USERNAME')
+email = os.getenv('DJANGO_SUPERUSER_EMAIL', 'admin@example.com')
+password = os.getenv('DJANGO_SUPERUSER_PASSWORD')
+if not User.objects.filter(username=username).exists():
+	User.objects.create_superuser(username=username, email=email, password=password)
+	print('[entrypoint] superuser created')
+else:
+	print('[entrypoint] superuser already exists')
+PY
+fi
 
 # Configura token do InfluxDB (opcional) via env
 if [ -n "$INFLUXDB_TOKEN" ]; then

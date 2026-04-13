@@ -39,13 +39,16 @@ services:
       - "7474:7474"
       - "7687:7687"
     environment:
-      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/password}
+      # Neo4j requires initial admin username to be `neo4j`.
+      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/middts123}
     volumes:
       - neo4j_data:/data
     networks:
       - middts_net
     healthcheck:
-      test: ["CMD-SHELL", "cypher-shell -a bolt://localhost:7687 -u neo4j -p ${NEO4J_PASSWORD:-password} 'RETURN 1'"]
+      # use $$ to escape $ so Compose doesn't interpolate; the expansion happens
+      # inside the container shell at runtime
+      test: ["CMD-SHELL", "USER=$${NEO4J_AUTH%%/*}; PASS=$${NEO4J_AUTH#*/}; cypher-shell -a bolt://localhost:7687 -u \"$$USER\" -p \"$$PASS\" 'RETURN 1'"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -100,18 +103,22 @@ services:
       influxdb:
         condition: service_healthy
     environment:
-      DJANGO_SETTINGS_MODULE: middleware_dt.settings
+      DJANGO_SETTINGS_MODULE: middleware_dt.settings_base
+      HOST_IP: ${HOST_IP:-10.22.1.247}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,10.22.1.247,*}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-http://localhost,http://127.0.0.1,http://${HOST_IP:-10.22.1.247},http://${HOST_IP:-10.22.1.247}:8000}
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-middts}
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-middts}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       NEO4J_URL: ${NEO4J_URL:-neo4j:7687}
       NEO4J_USER: ${NEO4J_USER:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-password}
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-middts123}
       INFLUXDB_HOST: influxdb
       INFLUXDB_PORT: 8086
       INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-iot_data}
@@ -124,9 +131,9 @@ services:
       TB_SCHEME: ${MIDDLEWARE_TB_SCHEME:-https}
     healthcheck:
       test: ["CMD", "python", "manage.py", "check"]
-      interval: 10s
-      timeout: 5s
-      retries: 8
+      interval: 30s
+      timeout: 60s
+      retries: 5
     restart: unless-stopped
     volumes:
       - static_volume:/middleware-dt/static
