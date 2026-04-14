@@ -1,10 +1,10 @@
 COMPOSE = docker compose -f docker-compose.yml
 
-.PHONY: help build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean
+.PHONY: help build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean seed-house
 
 help:
 	@echo "Usage: make <target>"
-	@echo "Targets: build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean"
+	@echo "Targets: build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean seed-house"
 
 build:
 	# Build all services including the simulator profile by default
@@ -69,6 +69,11 @@ deploy: update
 db-restore:
 	@echo "Run on host to restore DB dump (middts.sql):"
 	@echo "  cat middts.sql | docker exec -i $$(docker compose -f docker-compose.yml ps -q db) psql -U ${POSTGRES_USER:-postgres} middts"
+
+# Carrega o cenário House 2.0 (SystemContext + 8 DTDLModels) via API REST.
+# Requer que o middleware esteja UP. Passe ARGS="--force" para recriar modelos existentes.
+seed-house:
+	$(COMPOSE) exec -T middleware python manage.py load_house_scenario --base-url http://localhost:8000 $(ARGS)
 
 # Simple healthcheck for main services
 healthcheck:

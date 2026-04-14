@@ -1,0 +1,33 @@
+{
+  "@context": ["dtmi:dtdl:context;3", "dtmi:dtdl:extension:quantitativeTypes;1"],
+  "@id": "dtmi:housegen:Pool;1",
+  "@type": "Interface",
+  "displayName": "Pool",
+  "contents": [
+    {
+      "@type": ["Property", "Area"],
+      "name": "size",
+      "schema": "double",
+      "writable": true,
+      "unit": "squareFoot"
+    },
+    {
+      "@type": ["Telemetry", "Temperature"],
+      "name": "temperature",
+      "schema": "double",
+      "unit": "degreeCelsius"
+    },
+    {
+      "@type": "Telemetry",
+      "name": "waterLevel",
+      "schema": "double"
+    },
+    {
+      "@type": "Relationship",
+      "name": "has_pump",
+      "minMultiplicity": 0,
+      "maxMultiplicity": 1,
+      "target": "dtmi:housegen:Pump;1"
+    }
+  ]
+}

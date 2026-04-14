@@ -1,0 +1,19 @@
+{
+  "@context": "dtmi:dtdl:context;3",
+  "@id": "dtmi:housegen:Garden;1",
+  "@type": "Interface",
+  "displayName": "Garden",
+  "contents": [
+    {
+      "@type": "Telemetry",
+      "name": "soilHumidity",
+      "schema": "double",
+      "displayName": "Soil Humidity"
+    },
+    {
+      "@type": "Relationship",
+      "name": "has_irrigationSystem",
+      "target": "dtmi:housegen:Irrigation;1"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "@context": ["dtmi:dtdl:context;3", "dtmi:dtdl:extension:causal;1"],
+  "@id": "dtmi:housegen:Irrigation;1",
+  "@type": "Interface",
+  "displayName": "Irrigation",
+  "contents": [
+    {
+      "@type": "Telemetry",
+      "name": "waterFlowRate",
+      "schema": "double",
+      "displayName": "Water Flow Rate",
+      "description": "The rate of water flow in liters per minute"
+    },
+    {
+      "@type": ["Property", "Causal"],
+      "name": "irrigationStatus",
+      "schema": "boolean",
+      "displayName": "Set the Irrigation status",
+      "description": "Defines if the irrigation system is ON or OFF"
+    }
+  ]
+}
