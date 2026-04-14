@@ -1,8 +1,13 @@
 COMPOSE = docker compose -f docker-compose.yml
 
-.PHONY: help build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean seed-house
+PHONY: help build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean seed-house discover-gateways
 
 help:
+
+# Dispara a descoberta de dispositivos para todos os gateways via API REST.
+# Passe ARGS para enviar opções adicionais ao comando (ex: ARGS="--gateway-ids=1,2 --dry-run").
+discover-gateways:
+	$(COMPOSE) exec -T middleware python manage.py discover_all_gateways --base-url http://localhost:8000 $(ARGS)
 	@echo "Usage: make <target>"
 	@echo "Targets: build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean seed-house"
 

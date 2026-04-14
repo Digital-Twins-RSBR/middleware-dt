@@ -213,6 +213,11 @@ USE_INFLUX_TO_EVALUATE = _env_bool("USE_INFLUX_TO_EVALUATE", True)
 ENABLE_INFLUX_LATENCY_MEASUREMENTS = _env_bool("ENABLE_INFLUX_LATENCY_MEASUREMENTS", False)
 DTDL_PARSER_URL = os.getenv("DTDL_PARSER_URL", "http://parser:8080/api/DTDLModels/parse/")
 
+# Device type mapping configuration: when True, the orchestrator will
+# attempt to create properties from a static mapping file. For testing we
+# allow disabling this so telemetry-based inference is used alone.
+DEVICE_TYPE_MAPPING_ENABLED = _env_bool('DEVICE_TYPE_MAPPING_ENABLED', True)
+
 # Digital Twin Settings
 DEFAULT_INACTIVITY_TIMEOUT = 60
 # Controla integração com Neo4j. Por padrão desabilitado para evitar tentativas

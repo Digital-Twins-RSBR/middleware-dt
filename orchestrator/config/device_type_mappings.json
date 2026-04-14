@@ -1,0 +1,20 @@
+{
+  "LightBulb": [
+    {"name": "state", "type": "Boolean", "rpc_write_method": "setState"},
+    {"name": "brightness", "type": "Double", "rpc_read_method": "getBrightness", "rpc_write_method": "setBrightness"}
+  ],
+  "Pump": [
+    {"name": "running", "type": "Boolean", "rpc_write_method": "setRunning"},
+    {"name": "flow", "type": "Double"}
+  ],
+  "Irrigation": [
+    {"name": "open", "type": "Boolean", "rpc_write_method": "setOpen"}
+  ],
+  "Soil Humidity Sensor": [
+    {"name": "humidity", "type": "Double"}
+  ],
+  "AirConditioner": [
+    {"name": "temperature", "type": "Double"},
+    {"name": "power", "type": "Boolean", "rpc_write_method": "setPower"}
+  ]
+}
