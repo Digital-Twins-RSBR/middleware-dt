@@ -1,19 +1,35 @@
 COMPOSE = docker compose -f docker-compose.yml
 
-.PHONY: help build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy
+.PHONY: help build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean
 
 help:
 	@echo "Usage: make <target>"
-	@echo "Targets: build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy"
+	@echo "Targets: build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean"
 
 build:
-	$(COMPOSE) build --pull --no-cache
+	# Build all services including the simulator profile by default
+	$(COMPOSE) --profile simulator build --pull --no-cache
 
 up:
-	$(COMPOSE) up -d
+	# Bring up all services including simulator by default. To avoid starting simulator,
+	# run `$(COMPOSE) up -d` without the profile or use the `sim-down` target.
+	$(COMPOSE) --profile simulator up -d
 
 down:
 	$(COMPOSE) down
+
+clean:
+	# Stop and remove containers, networks and volumes defined in compose, then prune dangling volumes
+	$(COMPOSE) down -v --remove-orphans || true
+	@echo "Pruning dangling Docker volumes (non-destructive for images)..."
+	docker volume prune -f || true
+
+fullclean:
+	# Destructive: remove containers, images and volumes for a full reset of the environment
+	@echo "FULL CLEAN: stopping compose, removing images and volumes. This is destructive."
+	$(COMPOSE) down --rmi all -v --remove-orphans || true
+	@echo "Running docker system prune -a --volumes (may free a lot of space)..."
+	docker system prune -a --volumes -f || true
 
 restart:
 	$(COMPOSE) restart middleware nginx

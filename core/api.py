@@ -8,8 +8,8 @@ from typing import List
 import jwt
 import requests
 from datetime import datetime, timedelta
-from .models import DTDLParserClient, GatewayIOT
-from .schemas import CreateDTDLParserClientchema, CreateGatewayIOTSchema, DTDLParserClientchema, GatewayIOTSchema
+from .models import GatewayIOT
+from .schemas import CreateGatewayIOTSchema, GatewayIOTSchema
 from rest_framework_simplejwt.tokens import RefreshToken
 
 
@@ -54,9 +54,24 @@ def list_gateways(request):
     gateways = GatewayIOT.objects.all()
     return gateways
 
-@router.get("/gatewayiot/{gateway_id}/jwt/", response={200: dict, 400: dict}, tags=['Core'])
-def get_jwt_token_gateway(request, gateway_id: int):
+
+def get_gateway_auth_headers(request, gateway_id: int):
     gateway = get_object_or_404(GatewayIOT, id=gateway_id)
+
+    if gateway.auth_method == GatewayIOT.AUTH_METHOD_API_KEY:
+        if not gateway.api_key:
+            return {"error": "Gateway API key is not configured."}, 400
+        return {
+            "headers": {
+                "Content-Type": "application/json",
+                "X-Authorization": f"ApiKey {gateway.api_key}",
+            },
+            "token_type": "api_key",
+        }, 200
+
+    if not gateway.username or not gateway.password:
+        return {"error": "Gateway username/password are not configured."}, 400
+
     url = f"{gateway.url}/api/auth/login"
     payload = {
         "username": gateway.username,
@@ -66,29 +81,56 @@ def get_jwt_token_gateway(request, gateway_id: int):
         "Content-Type": "application/json"
     }
     response = requests.post(url, headers=headers, data=json.dumps(payload))
-    if response.status_code == 200:
-        token = response.json().get("token")
-        return {"token": token}, 200
-    else:
+    if response.status_code != 200:
         return {
             "error": f"Error obtaining JWT token: {response.status_code}, {response.text}"
         }, 400
 
-@router.post("/dtdlparserclient/", response=DTDLParserClientchema, tags=['Core'])
-def create_dtdlparserclient(request, payload: CreateDTDLParserClientchema):
-    payload_data = payload.dict()
-    dtdlparserclient = DTDLParserClient.objects.create(**payload_data)
-    return dtdlparserclient
+    token = response.json().get("token")
+    if not token:
+        return {"error": "ThingsBoard login response has no token."}, 400
 
-@router.get("/dtdlparserclient/{dtdlparserclient_id}/", response=DTDLParserClientchema, tags=['Core'])
-def get_dtdlparserclient(request, dtdlparserclient_id: int):
-    dtdlparserclient = get_object_or_404(DTDLParserClient, id=dtdlparserclient_id)
-    return dtdlparserclient
+    return {
+        "headers": {
+            "Content-Type": "application/json",
+            "X-Authorization": f"Bearer {token}",
+        },
+        "token": token,
+        "token_type": "bearer",
+    }, 200
 
-@router.get("/dtdlparserclient/", response=List[DTDLParserClientchema], tags=['Core'])
-def list_dtdlparserclient(request):
-    dtdlparserclients = DTDLParserClient.objects.all()
-    return dtdlparserclients
+@router.get("/gatewayiot/{gateway_id}/jwt/", response={200: dict, 400: dict}, tags=['Core'])
+def get_jwt_token_gateway(request, gateway_id: int):
+    auth_response, status_code = get_gateway_auth_headers(request, gateway_id)
+    if status_code != 200:
+        return auth_response, status_code
+    token = auth_response.get("token")
+    if not token:
+        return {
+            "error": "Gateway is configured with API key; no JWT token to return.",
+            "token_type": auth_response.get("token_type"),
+        }, 400
+    return {"token": token, "token_type": auth_response.get("token_type")}, 200
+
+
+@router.get("/gatewayiot/{gateway_id}/check/", response={200: dict, 400: dict}, tags=['Core'])
+def check_gateway_access(request, gateway_id: int):
+    gateway = get_object_or_404(GatewayIOT, id=gateway_id)
+    auth_response, status_code = get_gateway_auth_headers(request, gateway_id)
+    if status_code != 200:
+        return auth_response, status_code
+
+    response = requests.get(f"{gateway.url}/api/auth/user", headers=auth_response["headers"])
+    if response.status_code == 200:
+        return {
+            "ok": True,
+            "gateway": gateway.name,
+            "auth_method": gateway.auth_method,
+        }, 200
+    return {
+        "ok": False,
+        "error": f"Gateway check failed: {response.status_code}, {response.text}",
+    }, 400
 
 # Middleware to validate JWT tokens will be implemented separately.
 

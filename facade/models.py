@@ -72,17 +72,13 @@ class Device(models.Model):
         timeout = self.get_inactivity_timeout()
         if timeout is None:
             return  # Let ThingsBoard handle default timeout
-            
-        from facade.api import get_jwt_token_gateway
-        response, status_code = get_jwt_token_gateway(None, self.gateway.id)
         
+        from core.api import get_gateway_auth_headers
+        response, status_code = get_gateway_auth_headers(None, self.gateway.id)
+
         if status_code == 200:
-            token = response['token']
             url = f"{self.gateway.url}/api/plugins/telemetry/DEVICE/{self.identifier}/SERVER_SCOPE"
-            headers = {
-                "Content-Type": "application/json",
-                "X-Authorization": f"Bearer {token}",
-            }
+            headers = response['headers']
             
             # Format payload as a dictionary
             payload = {
@@ -105,17 +101,13 @@ class Device(models.Model):
         Tenta GET em /api/plugins/telemetry/DEVICE/{deviceId}/SHARED_SCOPE e,
         se falhar, tenta POST em /api/plugins/telemetry/DEVICE/{deviceId}/values/attributes/SHARED_SCOPE.
         """
-        from facade.api import get_jwt_token_gateway
-        response, status_code = get_jwt_token_gateway(None, self.gateway.id)
+        from core.api import get_gateway_auth_headers
+        response, status_code = get_gateway_auth_headers(None, self.gateway.id)
         if status_code != 200:
             print(f"Erro ao obter token JWT para gateway {self.gateway}: {response}")
             return
 
-        token = response['token']
-        headers = {
-            "Content-Type": "application/json",
-            "X-Authorization": f"Bearer {token}",
-        }
+        headers = response['headers']
         # 1. Tenta GET (ThingsBoard padrão para shared attributes)
         url_get = f"{self.gateway.url}/api/plugins/telemetry/DEVICE/{self.identifier}/values/attributes/SHARED_SCOPE"
         try:
@@ -145,18 +137,14 @@ class Device(models.Model):
         """
         Busca os labels do ThingsBoard e popula o campo metadata.
         """
-        from facade.api import get_jwt_token_gateway
-        response, status_code = get_jwt_token_gateway(None, self.gateway.id)
+        from core.api import get_gateway_auth_headers
+        response, status_code = get_gateway_auth_headers(None, self.gateway.id)
         if status_code != 200:
             print(f"Erro ao obter token JWT para gateway {self.gateway}: {response}")
             return
 
-        token = response['token']
         url = f"{self.gateway.url}/api/device/{self.identifier}"
-        headers = {
-            "Content-Type": "application/json",
-            "X-Authorization": f"Bearer {token}",
-        }
+        headers = response['headers']
         try:
             resp = requests.get(url, headers=headers)
             if resp.status_code == 200:
@@ -421,24 +409,20 @@ class Property(models.Model):
         correlation_id = getattr(self, 'correlation_id', None)
         property_name = getattr(self, 'name', 'unknown')
         
-        # Fast JWT fetch with error handling
+        # Resolve auth headers for the gateway (Bearer JWT or ApiKey)
         try:
-            from facade.api import get_jwt_token_gateway
-            response, status_code = get_jwt_token_gateway(None, gateway.id)
+            from core.api import get_gateway_auth_headers
+            response, status_code = get_gateway_auth_headers(None, gateway.id)
             if status_code != 200:
-                raise Exception(f"JWT failed: {status_code}")
-            token = response['token']
-            print(f"[{datetime.now().isoformat()}] 🔑 JWT: OK")
+                raise Exception(f"Gateway auth failed: {status_code}")
+            headers = response['headers']
+            print(f"[{datetime.now().isoformat()}] 🔑 Gateway auth: OK")
         except Exception as e:
-            print(f"[{datetime.now().isoformat()}] ❌ JWT failed: {e}")
+            print(f"[{datetime.now().isoformat()}] ❌ Gateway auth failed: {e}")
             return self._create_mock_response()
         
         # Setup RPC call - use TWOWAY with fast TB timeout
         urltwoway = f"{gateway.url}/api/rpc/twoway/{device.identifier}"
-        headers = {
-            "Content-Type": "application/json",
-            "X-Authorization": f"Bearer {token}",
-        }
         
         # Helper function to serialize Decimal and other non-JSON types
         def json_serialize_value(value):

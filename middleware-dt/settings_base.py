@@ -211,6 +211,7 @@ def _env_bool(name, default=False):
 
 USE_INFLUX_TO_EVALUATE = _env_bool("USE_INFLUX_TO_EVALUATE", True)
 ENABLE_INFLUX_LATENCY_MEASUREMENTS = _env_bool("ENABLE_INFLUX_LATENCY_MEASUREMENTS", False)
+DTDL_PARSER_URL = os.getenv("DTDL_PARSER_URL", "http://parser:8080/api/DTDLModels/parse/")
 
 # Digital Twin Settings
 DEFAULT_INACTIVITY_TIMEOUT = 60

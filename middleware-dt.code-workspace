@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"path": "../iot_simulator"
+		}
+	],
+	"settings": {}
+}

@@ -202,9 +202,10 @@ python manage.py migrate --noinput
 echo "Coletando arquivos estáticos..."
 python manage.py collectstatic --noinput || true
 
-# Create Django superuser if env vars present
+# Ensure Django superuser exists and has the configured password/flags
+# This will create the user if missing, and update password/flags if it already exists.
 if [ -n "$DJANGO_SUPERUSER_USERNAME" ] && [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then
-	echo "[entrypoint] Ensuring Django superuser $DJANGO_SUPERUSER_USERNAME exists"
+	echo "[entrypoint] Ensuring Django superuser $DJANGO_SUPERUSER_USERNAME exists and is configured"
 	python - <<PY
 import os
 import django
@@ -214,11 +215,16 @@ User = get_user_model()
 username = os.getenv('DJANGO_SUPERUSER_USERNAME')
 email = os.getenv('DJANGO_SUPERUSER_EMAIL', 'admin@example.com')
 password = os.getenv('DJANGO_SUPERUSER_PASSWORD')
-if not User.objects.filter(username=username).exists():
-	User.objects.create_superuser(username=username, email=email, password=password)
+u, created = User.objects.get_or_create(username=username, defaults={'email': email})
+u.email = email
+u.is_staff = True
+u.is_superuser = True
+u.set_password(password)
+u.save()
+if created:
 	print('[entrypoint] superuser created')
 else:
-	print('[entrypoint] superuser already exists')
+	print('[entrypoint] superuser updated (password/flags applied)')
 PY
 fi
 

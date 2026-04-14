@@ -47,6 +47,11 @@ class Command(BaseCommand):
 
     async def get_jwt_token(self, device):
         gateway = device.gateway
+        if getattr(gateway, 'auth_method', None) == getattr(gateway, 'AUTH_METHOD_API_KEY', 'api_key'):
+            if gateway.api_key:
+                return gateway.api_key
+            logger.warning(f"Gateway {gateway} configured for ApiKey auth but api_key is empty")
+            return None
         # Check token cache first
         gw_id = getattr(gateway, 'id', None)
         if gw_id is not None:
@@ -229,10 +234,16 @@ class Command(BaseCommand):
         try:
             jwt_token = await self.get_jwt_token(device)
             url = f"{device.gateway.url}/api/plugins/telemetry/DEVICE/{device.identifier}/values/attributes"
-            headers = {
-                "Content-Type": "application/json",
-                "X-Authorization": f"Bearer {jwt_token}"
-            }
+            if getattr(device.gateway, 'auth_method', None) == getattr(device.gateway, 'AUTH_METHOD_API_KEY', 'api_key'):
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-Authorization": f"ApiKey {jwt_token}"
+                }
+            else:
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-Authorization": f"Bearer {jwt_token}"
+                }
             # Use session per gateway to reuse connections
             gw_id = getattr(device.gateway, 'id', None)
             if gw_id not in self.sessions:

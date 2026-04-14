@@ -124,6 +124,7 @@ services:
       INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-iot_data}
       INFLUXDB_ORGANIZATION: ${INFLUXDB_ORGANIZATION:-middts}
       INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-admin_token_middts}
+      DTDL_PARSER_URL: ${DTDL_PARSER_URL:-http://parser:8080/api/DTDLModels/parse/}
       START_LISTENER_AFTER_TB: ${START_LISTENER_AFTER_TB:-0}
       THINGSBOARD_HOST: ${MIDDLEWARE_THINGSBOARD_HOST:-demo.thingsboard.io}
       TB_HOST: ${MIDDLEWARE_TB_HOST:-demo.thingsboard.io}
@@ -181,6 +182,7 @@ services:
       SIMULATOR_NUMBER: ${SIMULATOR_NUMBER:-1}
       RANDOMIZE: ${RANDOMIZE:-1}
       USE_MEMORY_STATE: ${USE_MEMORY_STATE:-1}
+      SIMULATOR_AUTO_START: ${SIMULATOR_AUTO_START:-1}
     ports:
       - "${SIMULATOR_PORT:-8001}:8001"
     restart: unless-stopped

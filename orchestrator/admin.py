@@ -3,7 +3,7 @@ import requests
 from django.contrib import admin
 from django.urls import path
 from orchestrator.forms import DigitalTwinInstanceAdminForm, DigitalTwinInstancePropertyAdminForm, DigitalTwinInstancePropertyInlineForm, DigitalTwinInstanceRelationshipInlineForm
-from core.models import DTDLParserClient
+from core.parser_client import get_dtdl_parser_url
 from .models import DigitalTwinInstanceRelationship, SystemContext, DTDLModel, DigitalTwinInstance, DigitalTwinInstanceProperty, ModelElement, ModelRelationship
 
 
@@ -43,9 +43,8 @@ class DTDLModelAdmin(admin.ModelAdmin):
                     "id": spec_id,
                     "specification": specification
                 }
-                # Send the POST request to the parser_client's URL
-                parser_client = DTDLParserClient.get_active()
-                parser_url = parser_client.url
+                # Send the POST request to the internal parser service.
+                parser_url = get_dtdl_parser_url()
                 response = requests.post(parser_url, json=payload)
                 
                 if response.status_code in [200, 201]:
@@ -58,7 +57,7 @@ class DTDLModelAdmin(admin.ModelAdmin):
             except json.JSONDecodeError:
                 self.message_user(request, f"Model {obj.name} has invalid JSON in specification.", level='error')
 
-    send_specification_to_parser.short_description = "Send specification to parser client"
+    send_specification_to_parser.short_description = "Send specification to parser service"
 
     def get_urls(self):
         urls = super().get_urls()

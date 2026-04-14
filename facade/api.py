@@ -1,7 +1,7 @@
 # facade/views.py
 import json
 
-from core.api import get_jwt_token_gateway
+from core.api import get_gateway_auth_headers
 from ninja import Query
 from core.models import GatewayIOT
 from .models import Device, DeviceType
@@ -24,11 +24,11 @@ def call_device_rpc(request, device_id: int, payload: DeviceRPCView):
     import uuid
     device = get_object_or_404(Device, id=device_id)
     gateway = device.gateway
+    auth_response, status_code = get_gateway_auth_headers(request, gateway.id)
+    if status_code != 200:
+        return api.create_response(request, auth_response, status=status_code)
     url = f"{gateway.url}/api/plugins/rpc/oneway/{device.identifier}"
-    headers = {
-        "Content-Type": "application/json",
-        "X-Authorization": f"Bearer {gateway.password}",
-    }
+    headers = auth_response["headers"]
     # Gerar request_id único
     request_id = str(uuid.uuid4())
     # Incluir request_id no payload.params
@@ -48,16 +48,11 @@ def call_device_rpc(request, device_id: int, payload: DeviceRPCView):
 @router.get("/gatewaysiot/{gateway_id}/discover-devices/", response={200: dict}, tags=['Facade'])
 def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Query(...)):
     user = request.user
-    response, status_code = get_jwt_token_gateway(request, gateway_id)
-    if status_code == 200:
-        token = response['token']
-    else:
-        return api.create_response(request, response['error'], status=status_code)
+    auth_response, status_code = get_gateway_auth_headers(request, gateway_id)
+    if status_code != 200:
+        return api.create_response(request, auth_response, status=status_code)
     gateway = get_object_or_404(GatewayIOT, id=gateway_id)
-    headers = {
-        'Content-Type': 'application/json',
-        'X-Authorization': f"Bearer {token}"
-    }
+    headers = auth_response["headers"]
     url = f"{gateway.url}/api/tenant/devices"
     response = requests.get(url, headers=headers, params=params.dict())
     if response.status_code == 200:

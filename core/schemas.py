@@ -1,27 +1,17 @@
 from ninja import ModelSchema
 from pydantic import BaseModel
 
-from .models import DTDLParserClient, GatewayIOT
+from .models import GatewayIOT
 
 class CreateGatewayIOTSchema(ModelSchema):
     class Meta:
         model = GatewayIOT
-        fields = ('name', 'url', 'username', 'password')
+        fields = ('name', 'url', 'auth_method', 'username', 'password', 'api_key')
 
 class GatewayIOTSchema(ModelSchema):
     class Meta:
         model = GatewayIOT
-        fields = ('id', 'name', 'url', 'username', 'password', )
-
-class CreateDTDLParserClientchema(ModelSchema):
-    class Meta:
-        model = DTDLParserClient
-        fields = ('name', 'url', )
-
-class DTDLParserClientchema(ModelSchema):
-    class Meta:
-        model = DTDLParserClient
-        fields = ('id', 'name', 'url')
+        fields = ('id', 'name', 'url', 'auth_method', 'username', 'password', 'api_key')
 
 class TokenSchema(BaseModel):
     token: str

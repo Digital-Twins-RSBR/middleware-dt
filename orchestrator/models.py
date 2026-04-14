@@ -6,7 +6,7 @@ import requests
 from requests.exceptions import RequestException
 from sentence_transformers import SentenceTransformer, util
 
-from core.models import DTDLParserClient
+from core.parser_client import get_dtdl_parser_url
 from facade.models import Device, Property, RPCCallTypes
 import time
 
@@ -67,8 +67,7 @@ class DTDLModel(models.Model):
             "id": spec_id,
             "specification": specification
         }
-        parser_client = DTDLParserClient.get_active()
-        parser_url = parser_client.url
+        parser_url = get_dtdl_parser_url()
         try:
             response = requests.post(parser_url, json=payload)
             response.raise_for_status()  # Levanta um erro se o status code for 4xx/5xx
