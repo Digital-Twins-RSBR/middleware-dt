@@ -19,9 +19,47 @@ Observação: o comando chama os endpoints da API para exercitar o stack
 HTTP/Ninja e garantir que a lógica de `discover_devices` é testada.
 """
 import sys
+import os
 from django.core.management.base import BaseCommand, CommandError
-from pathlib import Path
 import requests
+from django.contrib.auth import get_user_model
+from django.test import Client
+from urllib.parse import urlsplit
+
+
+class _DjangoClientSession:
+    def __init__(self, client):
+        self.client = client
+
+    def _path(self, url, params=None):
+        parsed = urlsplit(url)
+        path = parsed.path or "/"
+        query_parts = []
+        if parsed.query:
+            query_parts.append(parsed.query)
+        if params:
+            query_parts.extend(f"{key}={value}" for key, value in params.items())
+        if query_parts:
+            path = f"{path}?{'&'.join(query_parts)}"
+        return path
+
+    def get(self, url, params=None, timeout=None):
+        return _DjangoClientResponse(self.client.get(self._path(url, params=params)))
+
+
+class _DjangoClientResponse:
+    def __init__(self, response):
+        self.status_code = response.status_code
+        self.text = response.content.decode("utf-8", errors="replace")
+
+    def json(self):
+        import json
+
+        return json.loads(self.text or "null")
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}: {self.text}")
 
 
 class Command(BaseCommand):
@@ -55,6 +93,11 @@ class Command(BaseCommand):
             action="store_true",
             help="Não faz chamadas que alterem o estado; apenas mostra o que faria",
         )
+        parser.add_argument(
+            "--username",
+            default=os.getenv("DJANGO_SUPERUSER_USERNAME", "middts"),
+            help="Usuário Django usado para autenticar as chamadas da API (default: DJANGO_SUPERUSER_USERNAME ou middts)",
+        )
 
     def handle(self, *args, **options):
         base_url = options["base_url"].rstrip("/")
@@ -62,9 +105,9 @@ class Command(BaseCommand):
         page_size = options["page_size"]
         page = options["page"]
         dry_run = options["dry_run"]
+        username = options["username"]
 
-        session = requests.Session()
-        session.headers.update({"Content-Type": "application/json"})
+        session = self._build_authenticated_session(username)
 
         self.stdout.write(self.style.MIGRATE_HEADING("\n=== discover_all_gateways ==="))
         self.stdout.write(f"  API base URL : {base_url}")
@@ -183,3 +226,13 @@ class Command(BaseCommand):
             for e in errs:
                 self.stdout.write(self.style.ERROR(f"    - {e}"))
         self.stdout.write("")
+
+    def _build_authenticated_session(self, username):
+        user = get_user_model().objects.filter(username=username).first()
+        if not user:
+            raise CommandError(
+                f"Usuário '{username}' não encontrado. Ajuste --username ou garanta que o superuser exista."
+            )
+        client = Client()
+        client.force_login(user)
+        return _DjangoClientSession(client)

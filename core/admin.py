@@ -1,8 +1,28 @@
 from django.contrib import admin
 from django.contrib import messages
 from django import forms
-from .models import GatewayIOT
+from .models import GatewayIOT, Organization, OrganizationMembership
 from .api import check_gateway_access
+
+
+def _filter_by_user_organizations(queryset, request, field_name='organization'):
+    user = getattr(request, 'user', None)
+    if getattr(user, 'is_superuser', False):
+        return queryset
+    if not user or not getattr(user, 'is_authenticated', False):
+        return queryset.none()
+    lookup = 'memberships__user' if field_name in (None, '', 'self') else f'{field_name}__memberships__user'
+    return queryset.filter(**{lookup: user}).distinct()
+
+
+def _single_user_organization(request):
+    user = getattr(request, 'user', None)
+    if not user or not getattr(user, 'is_authenticated', False):
+        return None
+    if getattr(user, 'is_superuser', False):
+        return None
+    qs = Organization.objects.filter(memberships__user=user).distinct()
+    return qs.first() if qs.count() == 1 else None
 
 
 class GatewayAdminForm(forms.ModelForm):
@@ -14,13 +34,56 @@ class GatewayAdminForm(forms.ModelForm):
             'api_key': forms.PasswordInput(render_value=True),
         }
 
+
+class OrganizationMembershipInline(admin.TabularInline):
+    model = OrganizationMembership
+    extra = 0
+
+
+@admin.register(Organization)
+class OrganizationAdmin(admin.ModelAdmin):
+    list_display = ('name', 'description', 'created_by', 'created_at', 'updated_at')
+    search_fields = ('name', 'description')
+    inlines = [OrganizationMembershipInline]
+    exclude = ('created_by',)
+
+    def get_queryset(self, request):
+        return _filter_by_user_organizations(super().get_queryset(request), request, field_name='self')
+
+    def save_model(self, request, obj, form, change):
+        if not obj.created_by_id:
+            obj.created_by = getattr(request, 'user', None)
+        super().save_model(request, obj, form, change)
+
+
+@admin.register(OrganizationMembership)
+class OrganizationMembershipAdmin(admin.ModelAdmin):
+    list_display = ('organization', 'user', 'role', 'joined_at')
+    list_filter = ('organization', 'role')
+    search_fields = ('organization__name', 'user__username', 'user__email')
+
+    def get_queryset(self, request):
+        return _filter_by_user_organizations(super().get_queryset(request), request)
+
 @admin.register(GatewayIOT)
 class GatewayAdmin(admin.ModelAdmin):
     form = GatewayAdminForm
-    list_display = ('name', 'url', 'auth_method', 'username')
+    list_display = ('name', 'organization', 'created_by', 'url', 'auth_method', 'username')
+    list_filter = ('organization', 'auth_method')
     actions = ('check_gateway_access_action',)
     actions_on_top = True
     actions_on_bottom = True
+    exclude = ('created_by',)
+
+    def get_queryset(self, request):
+        return _filter_by_user_organizations(super().get_queryset(request), request)
+
+    def save_model(self, request, obj, form, change):
+        if not obj.organization_id:
+            obj.organization = _single_user_organization(request)
+        if not obj.created_by_id:
+            obj.created_by = getattr(request, 'user', None)
+        super().save_model(request, obj, form, change)
 
     def get_actions(self, request):
         actions = super().get_actions(request)

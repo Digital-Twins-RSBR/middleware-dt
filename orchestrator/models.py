@@ -1,6 +1,7 @@
 from enum import unique
 from pickle import FALSE
 from typing import Iterable
+from django.conf import settings
 from django.db import IntegrityError, models
 import requests
 from requests.exceptions import RequestException
@@ -18,6 +19,8 @@ from orchestrator.utils import normalize_name
 class SystemContext(models.Model): 
     name = models.CharField(max_length=255)
     description = models.TextField()
+    organization = models.ForeignKey('core.Organization', null=True, blank=True, on_delete=models.SET_NULL)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
 
     class Meta:
         verbose_name = "System context"
@@ -33,6 +36,7 @@ class DTDLModel(models.Model):
     name = models.CharField(max_length=255)
     specification = models.JSONField()
     parsed_specification = models.JSONField(null=True, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
 
     class Meta:
         verbose_name = "DTDL model"

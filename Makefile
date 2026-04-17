@@ -1,15 +1,22 @@
 COMPOSE = docker compose -f docker-compose.yml
 
-PHONY: help build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean seed-house discover-gateways
+PHONY: help build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean seed-house discover-gateways discover-devices seed-house-devices
 
 help:
+	@echo "Usage: make <target>"
+	@echo "Targets: build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean seed-house discover-devices seed-house-devices"
 
 # Dispara a descoberta de dispositivos para todos os gateways via API REST.
-# Passe ARGS para enviar opções adicionais ao comando (ex: ARGS="--gateway-ids=1,2 --dry-run").
+# Passe ARGS para enviar opções adicionais ao comando (ex: ARGS=\"--gateway-ids=1,2 --dry-run\").
 discover-gateways:
 	$(COMPOSE) exec -T middleware python manage.py discover_all_gateways --base-url http://localhost:8000 $(ARGS)
-	@echo "Usage: make <target>"
-	@echo "Targets: build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean seed-house"
+
+discover-devices: discover-gateways
+
+# Carrega o cenário House 2.0 e em seguida descobre os devices nos gateways cadastrados.
+seed-house-devices:
+	$(MAKE) seed-house ARGS="$(ARGS)"
+	$(MAKE) discover-devices ARGS="$(ARGS)"
 
 build:
 	# Build all services including the simulator profile by default

@@ -31,19 +31,46 @@ if getattr(settings, 'DEVICE_TYPE_MAPPING_ENABLED', True):
 else:
     DEVICE_TYPE_MAPPINGS = {}
 
+
+def _normalize_mapping_key(value):
+    return " ".join(str(value or "").strip().lower().replace("_", " ").split())
+
+
+def _get_type_mapping(dtype_name):
+    if not dtype_name:
+        return None
+    if dtype_name in DEVICE_TYPE_MAPPINGS:
+        return DEVICE_TYPE_MAPPINGS[dtype_name]
+    normalized = _normalize_mapping_key(dtype_name)
+    for key, value in DEVICE_TYPE_MAPPINGS.items():
+        if _normalize_mapping_key(key) == normalized:
+            return value
+    return None
+
 router = Router()
 api = NinjaAPI()
+
+def _scope_to_organization(queryset, request):
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        return queryset.none()
+    if getattr(user, "is_superuser", False):
+        return queryset
+    return queryset.filter(organization__memberships__user=user).distinct()
 
 
 @router.get("/devices/", response={200: list[DeviceSchema]}, tags=['Facade'])
 def list_devices(request):
-    devices = Device.objects.all()
-    return devices
+    return _scope_to_organization(Device.objects.all(), request)
 
 @router.post("/devices/{device_id}/rpc/", response={200: dict}, tags=['Facade'])
 def call_device_rpc(request, device_id: int, payload: DeviceRPCView):
     import uuid
-    device = get_object_or_404(Device, id=device_id)
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        return api.create_response(request, {"detail": "Authentication required"}, status=403)
+    qs = _scope_to_organization(Device.objects.all(), request)
+    device = get_object_or_404(qs, id=device_id)
     gateway = device.gateway
     auth_response, status_code = get_gateway_auth_headers(request, gateway.id)
     if status_code != 200:
@@ -78,7 +105,13 @@ def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Q
     auth_response, status_code = get_gateway_auth_headers(request, gateway_id)
     if status_code != 200:
         return api.create_response(request, auth_response, status=status_code)
-    gateway = get_object_or_404(GatewayIOT, id=gateway_id)
+    gateway_qs = GatewayIOT.objects.all()
+    req_user = getattr(request, "user", None)
+    if getattr(req_user, "is_authenticated", False) and not getattr(req_user, "is_superuser", False):
+        gateway_qs = gateway_qs.filter(organization__memberships__user=req_user).distinct()
+    elif request is not None and req_user and not getattr(req_user, "is_authenticated", False):
+        gateway_qs = gateway_qs.none()
+    gateway = get_object_or_404(gateway_qs, id=gateway_id)
     headers = auth_response["headers"]
     url = f"{gateway.url}/api/tenant/devices"
     # Helper functions (defined here so they are available for both created and updated devices)
@@ -101,19 +134,22 @@ def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Q
 
     def apply_type_mapping(dev_obj, dtype_name):
         try:
-            mapping = DEVICE_TYPE_MAPPINGS.get(dtype_name) or DEVICE_TYPE_MAPPINGS.get(dtype_name.strip())
+            mapping = _get_type_mapping(dtype_name)
             if not mapping:
                 return
             for p in mapping:
                 # Create property without rpc methods first to avoid triggering RPC on save
                 defaults = {"type": p.get("type", "Double")}
                 prop, created = Property.objects.get_or_create(device=dev_obj, name=p["name"], defaults=defaults)
-                # If mapping defines rpc methods, set them using raw save to avoid RPC side-effects
+                # Shared attributes are authoritative; type mappings only fill gaps.
                 updated = False
-                if p.get("rpc_read_method") and prop.rpc_read_method != p.get("rpc_read_method"):
+                if not prop.type and p.get("type"):
+                    prop.type = p.get("type")
+                    updated = True
+                if not prop.rpc_read_method and p.get("rpc_read_method"):
                     prop.rpc_read_method = p.get("rpc_read_method")
                     updated = True
-                if p.get("rpc_write_method") and prop.rpc_write_method != p.get("rpc_write_method"):
+                if not prop.rpc_write_method and p.get("rpc_write_method"):
                     prop.rpc_write_method = p.get("rpc_write_method")
                     updated = True
                 if updated:
@@ -178,15 +214,27 @@ def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Q
             obj = Device.objects.filter(identifier=device_data['id']['id'], gateway=gateway).first()
             # Ensure device type exists (create if necessary)
             dtype_name = device_data.get('type') or 'Unknown'
-            dtype, _ = DeviceType.objects.get_or_create(name=dtype_name)
+            dtype, _ = DeviceType.objects.get_or_create(
+                name=dtype_name,
+                defaults={"organization": gateway.organization, "created_by": user},
+            )
+            if gateway.organization and dtype.organization_id is None:
+                dtype.organization = gateway.organization
+            if user and dtype.created_by_id is None:
+                dtype.created_by = user
+            if dtype.organization_id or dtype.created_by_id:
+                dtype.save(update_fields=[field for field in ['organization', 'created_by'] if getattr(dtype, f'{field}_id', None)])
             if obj:
                 # Atualiza campos e persiste (usando update_fields para evitar bypass)
                 obj.name = device_data['name']
                 obj.status = 'unknown'
                 obj.type = dtype
+                obj.organization = gateway.organization
                 obj.user = user
+                if obj.created_by_id is None:
+                    obj.created_by = user
                 try:
-                    obj.save(update_fields=['name', 'status', 'type', 'user'])
+                    obj.save(update_fields=['name', 'status', 'type', 'organization', 'user', 'created_by'])
                 except Exception:
                     obj.save()
                 updated_count += 1
@@ -211,6 +259,8 @@ def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Q
                     status='unknown',
                     type=dtype,
                     gateway=gateway,
+                    organization=gateway.organization,
+                    created_by=user,
                     user=user
                 ))
         created_count = 0
@@ -262,8 +312,10 @@ def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Q
 
 @router.get("/devices/{device_id}/rpc-methods/", response={200: list}, tags=['Facade'])
 def list_device_rpc_methods(request, device_id: int):
-    # user = request.auth
-    device = get_object_or_404(Device, id=device_id) #, user=user)
+    qs = _scope_to_organization(Device.objects.all(), request)
+    device = qs.filter(id=device_id).first()
+    if not device:
+        return api.create_response(request, {"detail": "Not found"}, status=404)
     rpc_methods = device.property_set.filter(rpc_read_method__isnull=False).values_list('name', 'rpc_read_method', 'rpc_write_method')
-    return rpc_methods
+    return list(rpc_methods)
 

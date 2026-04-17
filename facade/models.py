@@ -12,7 +12,7 @@ from enum import Enum
 from facade.utils import format_influx_line, get_session_for_gateway
 import traceback
 
-from core.models import GatewayIOT
+from core.models import GatewayIOT, Organization
 # INFLUX configuration
 INFLUXDB_HOST = settings.INFLUXDB_HOST
 INFLUXDB_PORT = settings.INFLUXDB_PORT
@@ -28,6 +28,8 @@ USE_INFLUX_TO_EVALUATE = settings.USE_INFLUX_TO_EVALUATE
 
 class DeviceType(models.Model):
     name = models.CharField(max_length=100, unique=True)
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.SET_NULL)
+    created_by = models.ForeignKey(User, null=True, blank=True, related_name='created_device_types', on_delete=models.SET_NULL)
     inactivityTimeout = models.IntegerField(
         null=True, 
         blank=True, 
@@ -49,12 +51,21 @@ class Device(models.Model):
     status = models.CharField(max_length=255)
     type = models.ForeignKey(DeviceType, on_delete=models.CASCADE, null=True)
     gateway = models.ForeignKey(GatewayIOT, related_name='devices', on_delete=models.CASCADE)
+    organization = models.ForeignKey(Organization, null=True, blank=True, on_delete=models.SET_NULL)
+    created_by = models.ForeignKey(User, null=True, blank=True, related_name='created_devices', on_delete=models.SET_NULL)
     user = models.ForeignKey(User, related_name='devices', on_delete=models.CASCADE)
     inactivityTimeout = models.IntegerField(null=True, blank=True, help_text="Timeout in seconds for device inactivity. Overrides type's timeout")
     metadata = models.TextField(blank=True, default='')  # Novo campo para armazenar metadados dos labels do ThingsBoard
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if self.gateway_id and not self.organization_id:
+            self.organization = self.gateway.organization
+        if self.user_id and not self.created_by_id:
+            self.created_by = self.user
+        super().save(*args, **kwargs)
     
     class Meta:
         unique_together = ('identifier', 'gateway')
@@ -98,8 +109,8 @@ class Device(models.Model):
     def sync_properties_from_thingsboard(self):
         """
         Busca atributos compartilhados do ThingsBoard e cria/atualiza Properties locais.
-        Tenta GET em /api/plugins/telemetry/DEVICE/{deviceId}/SHARED_SCOPE e,
-        se falhar, tenta POST em /api/plugins/telemetry/DEVICE/{deviceId}/values/attributes/SHARED_SCOPE.
+        Os shared attributes sao a fonte preferencial para rpc_read_method/rpc_write_method;
+        o fallback por mapeamento de tipo deve ser usado apenas quando esses metadados nao existirem.
         """
         from core.api import get_gateway_auth_headers
         response, status_code = get_gateway_auth_headers(None, self.gateway.id)
@@ -108,28 +119,60 @@ class Device(models.Model):
             return
 
         headers = response['headers']
-        # 1. Tenta GET (ThingsBoard padrão para shared attributes)
         url_get = f"{self.gateway.url}/api/plugins/telemetry/DEVICE/{self.identifier}/values/attributes/SHARED_SCOPE"
+
+        def normalize_property_entry(prop_name, prop_data):
+            if not prop_name or not isinstance(prop_data, dict):
+                return None
+            return {
+                "name": prop_name,
+                "type": prop_data.get("type", "Boolean"),
+                "rpc_read_method": prop_data.get("rpc_read_method", "") or "",
+                "rpc_write_method": prop_data.get("rpc_write_method", "") or "",
+            }
+
+        def extract_property_metadata(shared_attrs):
+            metadata = {}
+            if not isinstance(shared_attrs, list):
+                return metadata
+
+            for attr in shared_attrs:
+                if not isinstance(attr, dict):
+                    continue
+                key = attr.get("key")
+                value = attr.get("value")
+
+                if key == "properties" and isinstance(value, dict):
+                    for prop_name, prop_data in value.items():
+                        entry = normalize_property_entry(prop_name, prop_data)
+                        if entry:
+                            metadata[prop_name] = entry
+                    continue
+
+                if isinstance(value, dict) and (
+                    "rpc_read_method" in value or "rpc_write_method" in value or "type" in value
+                ):
+                    entry = normalize_property_entry(key, value)
+                    if entry:
+                        metadata[key] = entry
+
+            return metadata
+
         try:
             resp = requests.get(url_get, headers=headers)
             if resp.status_code == 200:
                 shared_attrs = resp.json()
-                for attr in shared_attrs:
-                    if attr.get("key") == "properties" and isinstance(attr.get("value"), dict):
-                        props = attr["value"]
-                        for prop_name, prop_data in props.items():
-                            if not isinstance(prop_data, dict):
-                                continue
-                            defaults = {
-                                "type": prop_data.get("type", "Boolean"),
-                                "rpc_read_method": prop_data.get("rpc_read_method", ""),
-                                "rpc_write_method": prop_data.get("rpc_write_method", ""),
-                            }
-                            Property.objects.update_or_create(
-                                device=self,
-                                name=prop_name,
-                                defaults=defaults
-                            )
+                property_metadata = extract_property_metadata(shared_attrs)
+                for prop_name, prop_defaults in property_metadata.items():
+                    Property.objects.update_or_create(
+                        device=self,
+                        name=prop_name,
+                        defaults={
+                            "type": prop_defaults["type"],
+                            "rpc_read_method": prop_defaults["rpc_read_method"],
+                            "rpc_write_method": prop_defaults["rpc_write_method"],
+                        }
+                    )
         except Exception as e:
             print(f"Erro ao sincronizar propriedades do ThingsBoard: {str(e)}")
 
@@ -167,6 +210,8 @@ class Device(models.Model):
             print(f"Erro ao sincronizar labels do ThingsBoard: {str(e)}")
 
     def save(self, *args, **kwargs):
+        if self.gateway and not self.organization_id:
+            self.organization = self.gateway.organization
         is_new = self.pk is None
         super().save(*args, **kwargs)
         # Se não houver nenhuma propriedade associada, busca do ThingsBoard e cria

@@ -12,6 +12,8 @@ from orchestrator.models import (
 )
 from orchestrator.utils import normalize_name
 import re
+import json
+from pathlib import Path
 
 
 class Command(BaseCommand):
@@ -94,84 +96,139 @@ class Command(BaseCommand):
             traceback.print_exc()
 
     def create_device_properties(self):
-        """Create properties for devices based on their types"""
-        # Device type to property mapping based on DTDL models and common IoT device properties
-        DEVICE_TYPE_PROPERTIES = {
-            'LightBulb': [
-                {'name': 'status', 'type': 'Boolean', 'rpc_read_method': 'checkStatus', 'rpc_write_method': 'switchLed'},
-                {'name': 'brightness', 'type': 'Integer', 'rpc_read_method': 'getBrightness', 'rpc_write_method': 'setBrightness'},
-            ],
-            'AirConditioner': [
-                {'name': 'status', 'type': 'Boolean', 'rpc_read_method': 'checkStatus', 'rpc_write_method': 'switchStatus'},
-                {'name': 'temperature', 'type': 'Double', 'rpc_read_method': 'getTemperature', 'rpc_write_method': 'setTemperature'},
-                {'name': 'humidity', 'type': 'Double', 'rpc_read_method': 'getHumidity'},
-                {'name': 'operationalStatus', 'type': 'Boolean', 'rpc_read_method': 'getOperationalStatus'},
-            ],
-            'Pump': [
-                {'name': 'status', 'type': 'Boolean', 'rpc_read_method': 'checkStatus', 'rpc_write_method': 'switchPump'},
-                {'name': 'operationalStatus', 'type': 'Boolean', 'rpc_read_method': 'getOperationalStatus'},
-                {'name': 'pressure', 'type': 'Double', 'rpc_read_method': 'getPressure'},
-                {'name': 'waterflowRate', 'type': 'Double', 'rpc_read_method': 'getWaterflowRate'},
-            ],
-            'Sensor': [
-                {'name': 'temperature', 'type': 'Double', 'rpc_read_method': 'getTemperature'},
-                {'name': 'humidity', 'type': 'Double', 'rpc_read_method': 'getHumidity'},
-                {'name': 'status', 'type': 'Boolean', 'rpc_read_method': 'checkStatus'},
-                {'name': 'operationalStatus', 'type': 'Boolean', 'rpc_read_method': 'getOperationalStatus'},
-            ],
-        }
-        
+        """
+        Create/update properties using shared attributes as source of truth.
+        Fallback mappings are applied only to fill missing values.
+        """
+        mappings = self._load_device_type_mappings()
+
         devices = Device.objects.all()
         properties_created = 0
+        properties_updated = 0
         devices_updated = 0
         
-        self.stdout.write("🔧 Creating device properties based on device types...")
+        self.stdout.write("🔧 Syncing properties from shared attributes with fallback mapping...")
         
         for device in devices:
             if not device.type:
                 continue
-                
+
+            device_changed = False
             device_type_name = device.type.name
-            property_templates = DEVICE_TYPE_PROPERTIES.get(device_type_name, [])
-            
-            if not property_templates:
-                # For unknown device types, create basic properties
-                property_templates = [
-                    {'name': 'status', 'type': 'Boolean', 'rpc_read_method': 'checkStatus'},
-                    {'name': 'operationalStatus', 'type': 'Boolean', 'rpc_read_method': 'getOperationalStatus'},
-                ]
-            
+
+            # 1) Source of truth: shared attributes from ThingsBoard
+            try:
+                if not self.dry_run:
+                    before_count = Property.objects.filter(device=device).count()
+                    device.sync_properties_from_thingsboard()
+                    after_count = Property.objects.filter(device=device).count()
+                    if after_count > before_count:
+                        properties_created += (after_count - before_count)
+                        device_changed = True
+            except Exception as exc:
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"  ⚠️ Failed shared-attribute sync for '{device.name}': {exc}"
+                    )
+                )
+
+            # 2) Fallback: type mapping from JSON, only to fill missing fields
+            property_templates = self._get_type_mapping(mappings, device_type_name)
             device_properties_created = 0
             for prop_template in property_templates:
+                if self.dry_run:
+                    continue
+
                 prop, created = Property.objects.get_or_create(
                     device=device,
                     name=prop_template['name'],
                     defaults={
-                        'type': prop_template['type'],
-                        'value': 'false' if prop_template['type'] == 'Boolean' else '0',
-                        'rpc_read_method': prop_template.get('rpc_read_method', ''),
-                        'rpc_write_method': prop_template.get('rpc_write_method', ''),
+                        'type': prop_template.get('type', 'Boolean'),
+                        'value': 'false' if prop_template.get('type', 'Boolean') == 'Boolean' else '0',
+                        'rpc_read_method': prop_template.get('rpc_read_method', '') or '',
+                        'rpc_write_method': prop_template.get('rpc_write_method', '') or '',
                     }
                 )
-                
+
                 if created:
                     properties_created += 1
                     device_properties_created += 1
-                    
+                    device_changed = True
                     if not self.dry_run:
                         self.stdout.write(f"  ➕ Created property '{prop.name}' for device '{device.name}'")
+                    continue
+
+                changed_fields = []
+                if not prop.rpc_read_method and prop_template.get('rpc_read_method'):
+                    prop.rpc_read_method = prop_template['rpc_read_method']
+                    changed_fields.append('rpc_read_method')
+                if not prop.rpc_write_method and prop_template.get('rpc_write_method'):
+                    prop.rpc_write_method = prop_template['rpc_write_method']
+                    changed_fields.append('rpc_write_method')
+
+                if changed_fields:
+                    prop.save(update_fields=changed_fields)
+                    properties_updated += 1
+                    device_changed = True
+
+            # Cleanup known legacy mapping artifacts that conflict with current simulator contract.
+            if not self.dry_run and self._normalize_mapping_key(device_type_name) == 'lightbulb':
+                removed_count, _ = Property.objects.filter(
+                    device=device,
+                    name='brightness',
+                    rpc_read_method='getBrightness',
+                    rpc_write_method='setBrightness',
+                ).delete()
+                if removed_count:
+                    device_changed = True
+                    self.stdout.write(
+                        f"  🧹 Removed legacy property 'brightness' from device '{device.name}'"
+                    )
             
-            if device_properties_created > 0:
+            if device_properties_created > 0 or device_changed:
                 devices_updated += 1
         
         if not self.dry_run:
             self.stdout.write(
-                self.style.SUCCESS(f"✅ Created {properties_created} properties for {devices_updated} devices")
+                self.style.SUCCESS(
+                    f"✅ Created {properties_created} properties, updated {properties_updated} properties across {devices_updated} devices"
+                )
             )
         else:
             self.stdout.write(
-                f"[DRY RUN] Would create {properties_created} properties for {devices_updated} devices"
+                "[DRY RUN] Would sync properties from shared attributes and apply fallback mappings"
             )
+
+    def _load_device_type_mappings(self):
+        mappings_path = Path(__file__).resolve().parents[2] / 'config' / 'device_type_mappings.json'
+        try:
+            with mappings_path.open('r', encoding='utf-8') as mapping_file:
+                return json.load(mapping_file)
+        except Exception as exc:
+            self.stdout.write(
+                self.style.WARNING(f"⚠️ Failed to load {mappings_path}: {exc}")
+            )
+            return {}
+
+    @staticmethod
+    def _normalize_mapping_key(value):
+        if value is None:
+            return ''
+        return str(value).strip().lower()
+
+    def _get_type_mapping(self, mappings, dtype_name):
+        if not dtype_name or not isinstance(mappings, dict):
+            return []
+
+        if dtype_name in mappings:
+            return mappings[dtype_name]
+
+        normalized_target = self._normalize_mapping_key(dtype_name)
+        for key, value in mappings.items():
+            if self._normalize_mapping_key(key) == normalized_target:
+                return value
+
+        return []
 
     def create_hierarchical_elements(self):
         """Create hierarchical Digital Twin elements (Houses, Rooms, Pools, Gardens) based on device structure"""

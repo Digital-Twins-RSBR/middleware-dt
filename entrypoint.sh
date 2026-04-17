@@ -211,6 +211,7 @@ import os
 import django
 django.setup()
 from django.contrib.auth import get_user_model
+from core.models import Organization, OrganizationMembership
 User = get_user_model()
 username = os.getenv('DJANGO_SUPERUSER_USERNAME')
 email = os.getenv('DJANGO_SUPERUSER_EMAIL', 'admin@example.com')
@@ -225,6 +226,20 @@ if created:
 	print('[entrypoint] superuser created')
 else:
 	print('[entrypoint] superuser updated (password/flags applied)')
+
+org, org_created = Organization.objects.get_or_create(
+	name='Default',
+	defaults={'description': 'Default organization bootstraped by entrypoint'},
+)
+membership, membership_created = OrganizationMembership.objects.get_or_create(
+	user=u,
+	organization=org,
+	defaults={'role': OrganizationMembership.ROLE_ADMIN},
+)
+if org_created:
+	print('[entrypoint] Default organization created')
+if membership_created:
+	print('[entrypoint] superuser added to Default organization')
 PY
 fi
 

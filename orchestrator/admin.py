@@ -2,14 +2,44 @@ import json
 import requests
 from django.contrib import admin
 from django.urls import path
+from core.models import Organization
 from orchestrator.forms import DigitalTwinInstanceAdminForm, DigitalTwinInstancePropertyAdminForm, DigitalTwinInstancePropertyInlineForm, DigitalTwinInstanceRelationshipInlineForm
 from core.parser_client import get_dtdl_parser_url
 from .models import DigitalTwinInstanceRelationship, SystemContext, DTDLModel, DigitalTwinInstance, DigitalTwinInstanceProperty, ModelElement, ModelRelationship
 
 
+def _filter_system_queryset(queryset, request, field_name='organization'):
+    user = getattr(request, 'user', None)
+    if getattr(user, 'is_superuser', False):
+        return queryset
+    if not user or not getattr(user, 'is_authenticated', False):
+        return queryset.none()
+    lookup = f'{field_name}__memberships__user' if field_name else 'organization__memberships__user'
+    return queryset.filter(**{lookup: user}).distinct()
+
+
+def _single_user_organization(request):
+    user = getattr(request, 'user', None)
+    if not user or not getattr(user, 'is_authenticated', False) or getattr(user, 'is_superuser', False):
+        return None
+    qs = Organization.objects.filter(memberships__user=user).distinct()
+    return qs.first() if qs.count() == 1 else None
+
+
 @admin.register(SystemContext)
 class SystemContextAdmin(admin.ModelAdmin):
-    list_display = ('name', 'description')
+    list_display = ('name', 'organization', 'created_by', 'description')
+    exclude = ('created_by',)
+
+    def get_queryset(self, request):
+        return _filter_system_queryset(super().get_queryset(request), request)
+
+    def save_model(self, request, obj, form, change):
+        if not obj.organization_id:
+            obj.organization = _single_user_organization(request)
+        if not obj.created_by_id:
+            obj.created_by = getattr(request, 'user', None)
+        super().save_model(request, obj, form, change)
     
 
 class ModelElementInline(admin.TabularInline):
@@ -22,10 +52,19 @@ class ModelRelationshipInline(admin.TabularInline):
 
 @admin.register(DTDLModel)
 class DTDLModelAdmin(admin.ModelAdmin):
-    list_display = ('name', 'specification', 'parsed_specification')
+    list_display = ('name', 'system', 'created_by', 'specification', 'parsed_specification')
     list_filter = ('system',)
     inlines = [ModelElementInline, ModelRelationshipInline]
     actions = ['send_specification_to_parser', 'reload_dtdl_specification']
+    exclude = ('created_by',)
+
+    def get_queryset(self, request):
+        return _filter_system_queryset(super().get_queryset(request), request, field_name='system__organization')
+
+    def save_model(self, request, obj, form, change):
+        if not obj.created_by_id:
+            obj.created_by = getattr(request, 'user', None)
+        super().save_model(request, obj, form, change)
 
     def send_specification_to_parser(self, request, queryset):
         for obj in queryset:
@@ -71,10 +110,16 @@ class ModelElementAdmin(admin.ModelAdmin):
     list_display = ('dtdl_model', 'element_id', 'element_type', 'name', 'schema', 'supplement_types')
     list_filter = ('dtdl_model__system', 'dtdl_model', 'element_type')
 
+    def get_queryset(self, request):
+        return _filter_system_queryset(super().get_queryset(request), request, field_name='dtdl_model__system__organization')
+
 @admin.register(ModelRelationship)
 class ModelRelationshipAdmin(admin.ModelAdmin):
     list_display = ('dtdl_model', 'relationship_id', 'name', 'source', 'target')
     list_filter = ('dtdl_model__system', 'dtdl_model')
+
+    def get_queryset(self, request):
+        return _filter_system_queryset(super().get_queryset(request), request, field_name='dtdl_model__system__organization')
 
 class DigitalTwinInstancePropertyInline(admin.TabularInline):
     form = DigitalTwinInstancePropertyInlineForm
@@ -94,11 +139,17 @@ class DigitalTwinInstanceAdmin(admin.ModelAdmin):
     form = DigitalTwinInstanceAdminForm
     inlines = [DigitalTwinInstancePropertyInline, DigitalTwinInstanceRelationshipInline]
 
+    def get_queryset(self, request):
+        return _filter_system_queryset(super().get_queryset(request), request, field_name='model__system__organization')
+
 @admin.register(DigitalTwinInstanceProperty)
 class DigitalTwinInstancePropertyAdmin(admin.ModelAdmin):
     list_display = ('property', 'get_causal', 'value', 'device_property', 'dtinstance__active')
     list_filter = ('dtinstance__model__system', 'dtinstance__model')
     form = DigitalTwinInstancePropertyAdminForm
+
+    def get_queryset(self, request):
+        return _filter_system_queryset(super().get_queryset(request), request, field_name='dtinstance__model__system__organization')
 
     def get_causal(request, obj):
         return obj.causal()
@@ -109,4 +160,7 @@ class DigitalTwinInstancePropertyAdmin(admin.ModelAdmin):
 class DigitalTwinInstanceRelationshipAdmin(admin.ModelAdmin):
     list_display = ('source_instance', 'relationship', 'target_instance')
     list_filter = ('source_instance__model__system', 'source_instance__model', 'relationship', 'target_instance__model__system', 'target_instance__model')
+
+    def get_queryset(self, request):
+        return _filter_system_queryset(super().get_queryset(request), request, field_name='source_instance__model__system__organization')
     

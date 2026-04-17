@@ -16,11 +16,15 @@ Equivalente via Make (dentro do container middleware):
     make seed-house
 """
 import json
+import os
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import requests
+from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand, CommandError
+from django.test import Client
 
 # Ordem de criação garante que modelos sem dependências venham antes.
 # O parser lida com relacionamentos entre modelos na mesma especificação,
@@ -47,6 +51,44 @@ SYSTEM_DESCRIPTION = (
 )
 
 
+class _DjangoClientSession:
+    def __init__(self, client):
+        self.client = client
+
+    def _path(self, url):
+        parsed = urlsplit(url)
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        return path
+
+    def get(self, url, timeout=None):
+        return _DjangoClientResponse(self.client.get(self._path(url)))
+
+    def post(self, url, json=None, timeout=None):
+        return _DjangoClientResponse(
+            self.client.post(
+                self._path(url),
+                data=__import__("json").dumps(json or {}),
+                content_type="application/json",
+            )
+        )
+
+
+class _DjangoClientResponse:
+    def __init__(self, response):
+        self._response = response
+        self.status_code = response.status_code
+        self.text = response.content.decode("utf-8", errors="replace")
+
+    def json(self):
+        return json.loads(self.text or "null")
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}: {self.text}")
+
+
 class Command(BaseCommand):
     help = "Carrega o cenário House 2.0 (SystemContext + DTDLModels) via API REST"
 
@@ -71,6 +113,11 @@ class Command(BaseCommand):
             action="store_true",
             help="Mostra o que seria criado sem fazer chamadas de escrita",
         )
+        parser.add_argument(
+            "--username",
+            default=os.getenv("DJANGO_SUPERUSER_USERNAME", "middts"),
+            help="Usuário Django usado para autenticar as chamadas da API (default: DJANGO_SUPERUSER_USERNAME ou middts)",
+        )
 
     # ------------------------------------------------------------------
     def handle(self, *args, **options):
@@ -78,8 +125,8 @@ class Command(BaseCommand):
         system_name = options["system_name"]
         force = options["force"]
         dry_run = options["dry_run"]
-        session = requests.Session()
-        session.headers.update({"Content-Type": "application/json"})
+        username = options["username"]
+        session = self._build_authenticated_session(username)
 
         self.stdout.write(self.style.MIGRATE_HEADING("\n=== load_house_scenario ==="))
         self.stdout.write(f"  API base URL : {base_url}")
@@ -123,6 +170,16 @@ class Command(BaseCommand):
             )
         except requests.HTTPError as exc:
             raise CommandError(f"API retornou erro: {exc}")
+
+    def _build_authenticated_session(self, username):
+        user = get_user_model().objects.filter(username=username).first()
+        if not user:
+            raise CommandError(
+                f"Usuário '{username}' não encontrado. Ajuste --username ou garanta que o superuser exista."
+            )
+        client = Client()
+        client.force_login(user)
+        return _DjangoClientSession(client)
 
     # ------------------------------------------------------------------
     def _get_or_create_system(self, session, base_url, name, force, dry_run):

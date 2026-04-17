@@ -2,6 +2,7 @@ from django.shortcuts import get_object_or_404
 import neo4j
 import neo4j.exceptions
 from pydantic import ValidationError
+from core.models import Organization, OrganizationMembership
 
 from facade.models import Property
 from orchestrator.schemas import (
@@ -46,6 +47,43 @@ from sentence_transformers import SentenceTransformer, util
 router = Router()
 
 
+def _get_user_organizations(user):
+    if getattr(user, "is_superuser", False):
+        return Organization.objects.all()
+    if not user or not getattr(user, "is_authenticated", False):
+        return Organization.objects.none()
+    return Organization.objects.filter(memberships__user=user).distinct()
+
+
+def _resolve_current_organization(request, organization_id: int = None):
+    organizations = _get_user_organizations(getattr(request, "user", None))
+    if organization_id is not None:
+        return organizations.filter(id=organization_id).first()
+    return organizations.first() if organizations.count() == 1 else None
+
+
+def _scope_systems_to_organization(queryset, request):
+    user = getattr(request, "user", None)
+    if getattr(user, "is_superuser", False):
+        return queryset
+    if not user or not getattr(user, "is_authenticated", False):
+        return queryset.none()
+    return queryset.filter(organization__memberships__user=user).distinct()
+
+
+def _get_scoped_system_or_404(request, system_id: int):
+    return get_object_or_404(_scope_systems_to_organization(SystemContext.objects.all(), request), id=system_id)
+
+
+def _scope_properties_to_organization(queryset, request):
+    user = getattr(request, "user", None)
+    if getattr(user, "is_superuser", False):
+        return queryset
+    if not user or not getattr(user, "is_authenticated", False):
+        return queryset.none()
+    return queryset.filter(device__organization__memberships__user=user).distinct()
+
+
 @router.post(
     "/systems/",
     response=SystemContextSchema,
@@ -53,6 +91,14 @@ router = Router()
 )
 def create_system(request, payload: CreateSystemContextSchema):
     payload_data = payload.dict()
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        raise HttpError(403, "Authentication required")
+    organization = _resolve_current_organization(request)
+    if not organization:
+        raise HttpError(400, "Could not resolve organization for current user")
+    payload_data['organization'] = organization
+    payload_data['created_by'] = user
     system = SystemContext.objects.create(**payload_data)
     return system
 
@@ -62,7 +108,7 @@ def create_system(request, payload: CreateSystemContextSchema):
     tags=["Orchestrator"],
 )
 def update_system(request, system_id: int, payload: CreateSystemContextSchema):
-    system = get_object_or_404(SystemContext, id=system_id)
+    system = _get_scoped_system_or_404(request, system_id)
     for attr, value in payload.dict().items():
         setattr(system, attr, value)
     system.save()
@@ -73,13 +119,13 @@ def update_system(request, system_id: int, payload: CreateSystemContextSchema):
     "/systems/{system_id}/", response=SystemContextSchema, tags=["Orchestrator"]
 )
 def get_system(request, system_id: int):
-    system = get_object_or_404(SystemContext, id=system_id)
+    system = _get_scoped_system_or_404(request, system_id)
     return system
 
 
 @router.get("/systems/", response=list[SystemContextSchema], tags=["Orchestrator"])
 def list_system(request):
-    systems = SystemContext.objects.all()
+    systems = _scope_systems_to_organization(SystemContext.objects.all(), request)
     return systems
 
 
@@ -87,8 +133,13 @@ def list_system(request):
     "/systems/{system_id}/dtdlmodels/", response=DTDLModelSchema, tags=["Orchestrator"]
 )
 def create_dtdlmodel(request, system_id, payload: CreateDTDLModelSchema):
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        raise HttpError(403, "Authentication required")
+    system = _get_scoped_system_or_404(request, system_id)
     payload_data = payload.dict()
-    payload_data["system"] = SystemContext.objects.filter(id=system_id).first()
+    payload_data["system"] = system
+    payload_data["created_by"] = user
     dtdlmodel = DTDLModel.objects.create(**payload_data)
     return dtdlmodel
 
@@ -96,12 +147,16 @@ def create_dtdlmodel(request, system_id, payload: CreateDTDLModelSchema):
     "/systems/{system_id}/dtdlmodels/bulk/", response=List[DTDLModelSchema], tags=["Orchestrator"]
 )
 def create_multiple_dtdlmodels(request, system_id: int, payload: List[DTDLSpecificationSchema]):
-    system = get_object_or_404(SystemContext, id=system_id)
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        raise HttpError(403, "Authentication required")
+    system = _get_scoped_system_or_404(request, system_id)
     created_models = []
     for spec in payload:
         payload_data = {
             "system": system,
             "name": spec.displayName,
+            "created_by": user,
             "specification": {
                 "@id": spec.id,
                 "@type": spec.type,
@@ -124,6 +179,7 @@ def create_multiple_dtdlmodels(request, system_id: int, payload: List[DTDLSpecif
 def update_dtdlmodel(
     request, system_id: int, dtdlmodel_id: int, payload: PutDTDLModelSchema
 ):
+    _get_scoped_system_or_404(request, system_id)
     dtdlmodel = DTDLModel.objects.filter(system_id=system_id, id=dtdlmodel_id).first()
     if not dtdlmodel:
         raise HttpError(
@@ -145,6 +201,7 @@ def update_dtdlmodel(
     tags=["Orchestrator"],
 )
 def list_dtdlmodels(request, system_id: int):
+    _get_scoped_system_or_404(request, system_id)
     queryset = DTDLModel.objects.filter(system_id=system_id)
     return queryset
 
@@ -155,6 +212,7 @@ def list_dtdlmodels(request, system_id: int):
     tags=["Orchestrator"],
 )
 def get_dtdlmodel(request, system_id: int, dtdl_model_id: int):
+    _get_scoped_system_or_404(request, system_id)
     dtdlmodel = DTDLModel.objects.filter(system_id=system_id, id=dtdl_model_id).first()
     if not dtdlmodel:
         raise HttpError(
@@ -168,15 +226,18 @@ def get_dtdlmodel(request, system_id: int, dtdl_model_id: int):
 def create_dtdlmodels_batch(
     request, system_id: int, payload: List[DTDLModelBatchSchema]
 ):
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        raise HttpError(403, "Authentication required")
     try:
-        system = SystemContext.objects.get(id=system_id)
+        system = _get_scoped_system_or_404(request, system_id)
         created_models = []
 
         for model_data in payload:
             dtdl_model, created = DTDLModel.objects.update_or_create(
                 system=system,
                 name=model_data.name,
-                defaults={"specification": model_data.specification},
+                defaults={"specification": model_data.specification, "created_by": user},
             )
             created_models.append({"id": dtdl_model.id, "name": dtdl_model.name})
 
@@ -198,6 +259,10 @@ def create_dtinstance(request, system_id: int, payload: CreateDTFromDTDLModelSch
     if not dtdl_model_id:
         raise ValidationError({"detail": "dtdl_model_id is required in the payload."})
 
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        raise HttpError(403, "Authentication required")
+    _get_scoped_system_or_404(request, system_id)
     dtdlmodel = DTDLModel.objects.filter(system_id=system_id, id=dtdl_model_id).first()
     if not dtdlmodel:
         raise HttpError(
@@ -212,6 +277,10 @@ def create_dtinstance(request, system_id: int, payload: CreateDTFromDTDLModelSch
 @router.post("/systems/{system_id}/instances/batch/", tags=["Orchestrator"])
 def create_instances_batch(request, system_id: int, payload: DTDLModelIDSchema):
     try:
+        user = getattr(request, "user", None)
+        if not user or not getattr(user, "is_authenticated", False):
+            raise HttpError(403, "Authentication required")
+        _get_scoped_system_or_404(request, system_id)
         created_instances = []
         for id_model in payload.dtdl_model_ids:
             dtdl_model = DTDLModel.objects.get(id=id_model, system_id=system_id)
@@ -232,6 +301,7 @@ def create_instances_batch(request, system_id: int, payload: DTDLModelIDSchema):
     tags=["Orchestrator"],
 )
 def list_instances(request, system_id: int):
+    get_object_or_404(_scope_systems_to_organization(SystemContext.objects.all(), request), id=system_id)
     return [
         dti for dti in DigitalTwinInstance.objects.filter(model__system_id=system_id)
     ]
@@ -243,6 +313,7 @@ def list_instances(request, system_id: int):
     tags=["Orchestrator"],
 )
 def get_instance(request, system_id: int, dtinstance_id: int):
+    get_object_or_404(_scope_systems_to_organization(SystemContext.objects.all(), request), id=system_id)
     dtinstance = DigitalTwinInstance.objects.filter(
         model__system_id=system_id, id=dtinstance_id
     ).first()
@@ -265,6 +336,7 @@ def bind_dtinstance_device(
     dtinstance_id: int,
     payload: BindDTInstancePropertieDeviceSchema,
 ):
+    _get_scoped_system_or_404(request, system_id)
     dtinstance = DigitalTwinInstance.objects.filter(
         model__system_id=system_id, id=dtinstance_id
     ).first()
@@ -277,7 +349,7 @@ def bind_dtinstance_device(
     dtproperty = DigitalTwinInstanceProperty.objects.filter(
         id=payload_data["property_id"], dtinstance=dtinstance
     ).first()
-    dtproperty.device_property = Property.objects.filter(
+    dtproperty.device_property = _scope_properties_to_organization(Property.objects.all(), request).filter(
         id=payload_data["device_property_id"]
     ).first()
     dtproperty.save()
@@ -298,6 +370,7 @@ def update_causal_property(
     payload: DigitalTwinPropertyUpdateSchema,
 ):
     try:
+        _get_scoped_system_or_404(request, system_id)
         # Verifica se o gêmeo digital e a propriedade existem
         instance = get_object_or_404(
             DigitalTwinInstance, model__system_id=system_id, id=dtinstance_id
@@ -393,6 +466,7 @@ def get_property_value(
     property_id: int,
 ):
     try:
+        _get_scoped_system_or_404(request, system_id)
         # Verifica se o gêmeo digital e a propriedade existem
         instance = get_object_or_404(
             DigitalTwinInstance, model__system_id=system_id, id=dtinstance_id
@@ -414,7 +488,7 @@ def get_property_value(
 @router.get("/systems/{system_id}/relationships/", tags=["Orchestrator"], response=List[DigitalTwinInstanceRelationshipModelSchema])
 def list_relationships(request, system_id: int):
     try:
-        system_context = get_object_or_404(SystemContext, pk=system_id)
+        system_context = _get_scoped_system_or_404(request, system_id)
         relationships = DigitalTwinInstanceRelationship.objects.filter(
             source_instance__model__system=system_context
         )
@@ -429,7 +503,7 @@ def create_relationships(
     request, system_id: int, relationships: List[DigitalTwinInstanceRelationshipSchema]
 ): 
     try:
-        system_context = get_object_or_404(SystemContext, pk=system_id)
+        system_context = _get_scoped_system_or_404(request, system_id)
         for relationship_data in relationships:
             relationship_name = relationship_data.relationship_name
             source_instance_id = relationship_data.source_instance_id
@@ -444,8 +518,8 @@ def create_relationships(
                 raise HttpError(400, f"Relationship '{relationship_name}' is not defined in the model for system {system_id}.")
 
             # Verifica se as instâncias digitais de origem e destino existem
-            source_instance = DigitalTwinInstance.objects.filter(id=source_instance_id).first()
-            target_instance = DigitalTwinInstance.objects.filter(id=target_instance_id).first()
+            source_instance = DigitalTwinInstance.objects.filter(id=source_instance_id, model__system=system_context).first()
+            target_instance = DigitalTwinInstance.objects.filter(id=target_instance_id, model__system=system_context).first()
 
             if not source_instance:
                 raise HttpError(400, f"Source Digital Twin Instance with ID {source_instance_id} does not exist.")
@@ -469,7 +543,7 @@ def create_relationships(
 @router.delete("/systems/{system_id}/relationships/", tags=["Orchestrator"])
 def delete_relationships(request, system_id: int, relationships: List[DigitalTwinInstanceRelationshipSchema]):
     try:
-        system_context = SystemContext.objects.get(pk=system_id)
+        system_context = _get_scoped_system_or_404(request, system_id)
         for rel in relationships:
             # Verifica se o relacionamento é permitido pelo modelo
             model_relationship = ModelRelationship.objects.filter(
@@ -480,8 +554,8 @@ def delete_relationships(request, system_id: int, relationships: List[DigitalTwi
                 raise HttpError(400, f"Relationship '{rel.relationship_name}' is not defined in the model for system {system_id}.")
 
             # Verifica se as instâncias digitais de origem e destino existem
-            source_instance = DigitalTwinInstance.objects.filter(id=rel.source_instance_id).first()
-            target_instance = DigitalTwinInstance.objects.filter(id=rel.target_instance_id).first()
+            source_instance = DigitalTwinInstance.objects.filter(id=rel.source_instance_id, model__system=system_context).first()
+            target_instance = DigitalTwinInstance.objects.filter(id=rel.target_instance_id, model__system=system_context).first()
 
             if not source_instance:
                 raise HttpError(400, f"Source Digital Twin Instance with ID {rel.source_instance_id} does not exist.")
@@ -511,6 +585,7 @@ def delete_relationships(request, system_id: int, relationships: List[DigitalTwi
 )
 def list_associated_properties(request, system_id: int):
     try:
+        _get_scoped_system_or_404(request, system_id)
         properties = DigitalTwinInstanceProperty.objects.filter(
             dtinstance__model__system_id=system_id, device_property__isnull=False
         )
@@ -532,13 +607,14 @@ def associate_property(
     payload: BindDTInstancePropertieDeviceSchema,
 ):
     try:
+        _get_scoped_system_or_404(request, system_id)
         dtinstance = get_object_or_404(
             DigitalTwinInstance, model__system_id=system_id, id=dtinstance_id
         )
         dtproperty = get_object_or_404(
             DigitalTwinInstanceProperty, id=property_id, dtinstance=dtinstance
         )
-        device_property = get_object_or_404(Property, id=payload.device_property_id)
+        device_property = get_object_or_404(_scope_properties_to_organization(Property.objects.all(), request), id=payload.device_property_id)
         
         dtproperty.device_property = device_property
         dtproperty.save()
@@ -586,7 +662,7 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
             return value
 
     try:
-        system_context = SystemContext.objects.get(pk=system_id)
+        system_context = _get_scoped_system_or_404(request, system_id)
         # Modifica a consulta Cypher para incluir o filtro system_id e trazer os relacionamentos
         filtered_query = f'''
         MATCH (system:SystemContext {{system_id: {system_context.system_id}}})-[:CONTAINS]->(dt_filter:DigitalTwin)
@@ -613,6 +689,7 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
 
 @router.post("/systems/{system_id}/instances/hierarchical/", tags=["Orchestrator"])
 def create_hierarchical_instances(request, system_id: int, data: dict = Body(...)):
+    system_context = _get_scoped_system_or_404(request, system_id)
     """
     Cria instâncias de Digital Twins a partir de um dicionário hierárquico.
     Cada chave é o nome do twin, e os valores são filhos.
@@ -634,7 +711,7 @@ def create_hierarchical_instances(request, system_id: int, data: dict = Body(...
         return JsonResponse({"detail": "Payload deve ser um dicionário JSON."}, status=422)
 
     model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
-    dtdl_models = list(DTDLModel.objects.filter(system_id=system_id))
+    dtdl_models = list(DTDLModel.objects.filter(system=system_context))
     model_names = [m.name for m in dtdl_models]
     created_instances = []
 
