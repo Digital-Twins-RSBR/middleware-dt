@@ -20,6 +20,7 @@ from django.db import transaction
 from facade.models import Device, Property
 from orchestrator.models import SystemContext, DTDLModel, DigitalTwinInstance, ModelElement, DigitalTwinInstanceProperty, DigitalTwinInstanceRelationship, ModelRelationship
 from orchestrator.utils import normalize_name
+from orchestrator.helpers import compute_similarity
 import re
 import os
 from django.conf import settings
@@ -100,23 +101,7 @@ def model_path_bfs(start_dtdl_id: str, target_dtdl_id: str, adjacency: dict, mod
     return []
 
 
-def compute_similarity(text_a: str, text_b: str):
-    """Compute semantic similarity score between two texts. Try sentence-transformer, fallback to lexical Jaccard."""
-    try:
-        from sentence_transformers import SentenceTransformer, util
-        model = SentenceTransformer(os.environ.get('ST_MODEL_NAME', 'all-MiniLM-L6-v2'))
-        emb_a = model.encode(text_a, convert_to_tensor=True)
-        emb_b = model.encode(text_b, convert_to_tensor=True)
-        return float(util.cos_sim(emb_a, emb_b)[0][0])
-    except Exception:
-        # lexical Jaccard as fallback
-        sa = set([t for t in re.split(r"\W+", text_a.lower()) if t])
-        sb = set([t for t in re.split(r"\W+", text_b.lower()) if t])
-        if not sa or not sb:
-            return 0.0
-        inter = sa.intersection(sb)
-        union = sa.union(sb)
-        return len(inter) / len(union)
+
 
 
 
@@ -370,123 +355,105 @@ class Command(BaseCommand):
                     instance_mapping[m] = inst
             if dry_run:
                 self.stdout.write(self.style.NOTICE(f"[DRY] Would create topology: {created_list}"))
-        for d in devices:
-            # heurística para extrair tokens hierárquicos de nome/metadata
-            tokens = []
-            # tenta extrair house/room patterns de metadata
-            if d.metadata:
-                tokens.extend([t for t in re.split(r"\W+", d.metadata) if t])
-            # quebra name em palavras
-            tokens.extend([t for t in re.split(r"\W+", d.name) if t])
-            # simplifica tokens combinando adjacentes como 'house 1'
-            combined = []
-            i = 0
-            while i < len(tokens):
-                if i + 1 < len(tokens) and tokens[i].lower() in ('house', 'room', 'apartment') and tokens[i+1].isdigit():
-                    combined.append(f"{tokens[i]} {tokens[i+1]}")
-                    i += 2
-                else:
-                    combined.append(tokens[i])
-                    i += 1
-            # por fim, tenta achar modelo para o próprio dispositivo
-            for group_key, dlist in groups.items():
-                # For each group (e.g. house 1), determine the minimal set of instances to create
-                self.stdout.write(self.style.NOTICE(f"Processing group {group_key} ({len(dlist)} devices)"))
-                # find distinct device models in this group
-                for d in dlist:
-                    # For each device, decide which model it maps to
-                    device_model = find_model_for_device(d, system)
-                    # try to find path from root_model to device_model
-                    path = []
-                    if root_model and device_model:
-                        path = model_path_bfs(root_model.dtdl_id, device_model.dtdl_id, adjacency, model_by_id)
-                    # If path empty and device_model present, fallback to simple path [device_model]
-                    if not path and device_model:
-                        path = [device_model.dtdl_id]
-                    # walk the path creating/finding instances for each model in order
-                    parent_instance = None
-                    created_list = []
-                    for mid in path:
-                        mdl = model_by_id.get(mid)
-                        if not mdl:
-                            continue
-                        # try to find existing instance for this model and group_key
-                        qname = None
-                        # prefer instances whose hierarchy contains the group_key token
+        for group_key, dlist in groups.items():
+            self.stdout.write(self.style.NOTICE(f"Processing group {group_key} ({len(dlist)} devices)"))
+            for d in dlist:
+                device_model = find_model_for_device(d, system)
+                path = []
+                if root_model and device_model:
+                    path = model_path_bfs(root_model.dtdl_id, device_model.dtdl_id, adjacency, model_by_id)
+                if not path and device_model:
+                    path = [device_model.dtdl_id]
+
+                parent_instance = None
+                created_list = []
+                for idx, mid in enumerate(path):
+                    mdl = model_by_id.get(mid)
+                    if not mdl:
+                        continue
+
+                    is_leaf = idx == len(path) - 1
+                    inst = None
+
+                    if is_leaf:
+                        # Leaf must be unique per device (avoid collapsing multiple devices of same type).
+                        inst = (
+                            DigitalTwinInstance.objects
+                            .filter(model=mdl, digitaltwininstanceproperty__device_property__device=d)
+                            .distinct()
+                            .first()
+                        )
+                        if not inst:
+                            inst = DigitalTwinInstance.objects.filter(model=mdl, name__iexact=d.name).first()
+                    else:
+                        # Intermediate nodes are shared within the group hierarchy.
                         existing = DigitalTwinInstance.objects.filter(model=mdl)
-                        found = None
                         for ex in existing:
                             if group_key and group_key.lower() in " ".join(ex.get_hierarchy()).lower():
-                                found = ex
+                                inst = ex
                                 break
-                        if found:
-                            inst = found
-                        else:
-                            # create instance, give name to hint the group
-                            if dry_run:
-                                created_list.append((mdl.name, f"{group_key}"))
-                                inst = None
-                            else:
-                                inst = DigitalTwinInstance.objects.create(model=mdl, name=f"{mdl.name} {group_key}")
-                                created_list.append((mdl.name, inst.name))
-                        # create relationship with parent
-                        if parent_instance and inst:
-                            rel = resolve_instance_relationship(parent_instance.model, mdl)
-                            if rel:
-                                DigitalTwinInstanceRelationship.objects.update_or_create(
-                                    source_instance=parent_instance,
-                                    target_instance=inst,
-                                    defaults={'relationship': rel}
-                                )
-                        parent_instance = inst
 
-                    # After creating the chain, associate device properties to the last instance (device level)
-                    instance = parent_instance
-                    if dry_run:
-                        self.stdout.write(self.style.NOTICE(f"[DRY] Device {d.name} -> would create/attach to instance {created_list}"))
-                        skipped += 1
-                        continue
-                    if instance is None:
-                        # fallback: try hierarchy approach
-                        instance, created_list = find_or_create_hierarchy([d.name], system, dry_run=dry_run)
-                    if instance is None:
-                        self.stdout.write(self.style.WARNING(f"Could not determine instance for device {d.name}. Skipping."))
-                        skipped += 1
-                        continue
-                    # conservative property binding: for each property, match to ModelElement by normalized name or by semantic similarity
-                    with transaction.atomic():
-                        for prop in Property.objects.filter(device=d):
-                            if not prop.name:
-                                continue
-                            norm_prop = normalize_name(prop.name)
-                            elems_qs = ModelElement.objects.filter(dtdl_model=instance.model) if instance and instance.model else ModelElement.objects.all()
-                            el = None
-                            # exact normalized name
+                    if not inst:
+                        if dry_run:
+                            preview_name = d.name if is_leaf else f"{mdl.name} {group_key}"
+                            created_list.append((mdl.name, preview_name))
+                            inst = None
+                        else:
+                            instance_name = d.name if is_leaf else f"{mdl.name} {group_key}"
+                            inst = DigitalTwinInstance.objects.create(model=mdl, name=instance_name)
+                            created_list.append((mdl.name, inst.name))
+
+                    if parent_instance and inst:
+                        rel = resolve_instance_relationship(parent_instance.model, mdl)
+                        if rel:
+                            DigitalTwinInstanceRelationship.objects.update_or_create(
+                                source_instance=parent_instance,
+                                target_instance=inst,
+                                defaults={'relationship': rel}
+                            )
+                    parent_instance = inst
+
+                instance = parent_instance
+                if dry_run:
+                    self.stdout.write(self.style.NOTICE(f"[DRY] Device {d.name} -> would create/attach to instance {created_list}"))
+                    skipped += 1
+                    continue
+                if instance is None:
+                    instance, created_list = find_or_create_hierarchy([d.name], system, dry_run=dry_run)
+                if instance is None:
+                    self.stdout.write(self.style.WARNING(f"Could not determine instance for device {d.name}. Skipping."))
+                    skipped += 1
+                    continue
+
+                with transaction.atomic():
+                    for prop in Property.objects.filter(device=d):
+                        if not prop.name:
+                            continue
+                        norm_prop = normalize_name(prop.name)
+                        elems_qs = ModelElement.objects.filter(dtdl_model=instance.model) if instance and instance.model else ModelElement.objects.all()
+                        el = None
+                        for e in elems_qs:
+                            if normalize_name(e.name) == norm_prop:
+                                el = e
+                                break
+                        if not el:
+                            best = None
+                            best_score = 0.0
                             for e in elems_qs:
-                                if normalize_name(e.name) == norm_prop:
-                                    el = e
-                                    break
-                            # semantic fallback
-                            if not el:
-                                # compute similarity between prop.name and element names and pick best above threshold
-                                best = None
-                                best_score = 0.0
-                                for e in elems_qs:
-                                    score = compute_similarity(prop.name, e.name)
-                                    if score > best_score:
-                                        best_score = score
-                                        best = e
-                                if best and best_score >= float(os.environ.get('ASSOC_SIM_THRESHOLD', 0.7)):
-                                    el = best
-                                else:
-                                    print(f"[WARN] No ModelElement found for property '{prop.name}' in model '{instance.model.name if instance and instance.model else 'N/A'}' - skipping binding.")
-                                    continue
-                            dtip, created_flag = DigitalTwinInstanceProperty.objects.get_or_create(dtinstance=instance, property=el)
-                            dtip.device_property = prop
-                            dtip.save(update_fields=['device_property'])
-                    created += 1
-                    self.stdout.write(self.style.SUCCESS(f"Created/updated DT instance for device {d.name}: {instance}"))
-            # end groups processing
+                                score = compute_similarity(prop.name, e.name)
+                                if score > best_score:
+                                    best_score = score
+                                    best = e
+                            if best and best_score >= float(os.environ.get('ASSOC_SIM_THRESHOLD', 0.7)):
+                                el = best
+                            else:
+                                print(f"[WARN] No ModelElement found for property '{prop.name}' in model '{instance.model.name if instance and instance.model else 'N/A'}' - skipping binding.")
+                                continue
+                        dtip, _ = DigitalTwinInstanceProperty.objects.get_or_create(dtinstance=instance, property=el)
+                        # Use update() to avoid triggering model save side-effects/RPC during binding.
+                        DigitalTwinInstanceProperty.objects.filter(pk=dtip.pk).update(device_property=prop)
+                created += 1
+                self.stdout.write(self.style.SUCCESS(f"Created/updated DT instance for device {d.name}: {instance}"))
 
         if not dry_run:
             added = repair_house_relationships(system, dry_run=dry_run)

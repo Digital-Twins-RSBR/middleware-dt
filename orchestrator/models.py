@@ -5,7 +5,6 @@ from django.conf import settings
 from django.db import IntegrityError, models
 import requests
 from requests.exceptions import RequestException
-from sentence_transformers import SentenceTransformer, util
 
 from core.parser_client import get_dtdl_parser_url
 from facade.models import Device, Property, RPCCallTypes
@@ -286,59 +285,45 @@ class DigitalTwinInstanceProperty(models.Model):
         if self.device_property is not None:
             return  # já está associado
 
-        # Define modelo semântico
-        model = SentenceTransformer("all-MiniLM-L6-v2")
+        from orchestrator.helpers import compute_similarity
 
         def extract_root_context(hierarchy):
-            # Retorna o primeiro elemento da hierarquia, se existir
             return hierarchy[0].strip().lower() if hierarchy else None
 
-        # Monta texto do digital twin property com contexto hierárquico
         hierarchy = self.get_hierarchy()
         norm_hierarchy = [normalize_name(h) for h in hierarchy]
         dt_text = " ".join(norm_hierarchy + [normalize_name(self.dtinstance.model.name), normalize_name(self.property.schema or "")])
         dt_root_context = extract_root_context(norm_hierarchy)
 
-        dt_embedding = model.encode(dt_text, convert_to_tensor=True)
-
         best_device_text = ''
         best_match = None
         best_score = 0.0
 
-        # Busca dispositivos sem associação
-
-        for property in Property.objects.filter(digitaltwininstanceproperty__isnull=True):
-            metadata = property.device.metadata or ""
-            # Normaliza device name e extrai contexto
-            device_name_norm = normalize_name(property.device.name)
-            device_type_norm = normalize_name(property.device.type.name) if property.device.type else ''
-            property_name_norm = normalize_name(property.name)
-            property_type_norm = normalize_name(str(property.type))
+        for prop in Property.objects.filter(digitaltwininstanceproperty__isnull=True):
+            metadata = prop.device.metadata or ""
+            device_name_norm = normalize_name(prop.device.name)
+            device_type_norm = normalize_name(prop.device.type.name) if prop.device.type else ''
+            property_name_norm = normalize_name(prop.name)
+            property_type_norm = normalize_name(str(prop.type))
             metadata_norm = normalize_name(metadata)
-            # Extrai tokens do device name normalizado
+
             device_hierarchy_tokens = device_name_norm.split()
-            # Descobre quantos tokens tem o root do DT (ex: 'house 1' -> 2 tokens)
             dt_root_tokens = dt_root_context.split() if dt_root_context else []
             num_root_tokens = len(dt_root_tokens)
             device_root_context = " ".join(device_hierarchy_tokens[:num_root_tokens]) if num_root_tokens > 0 else None
 
-            # Só compara semanticamente se o contexto-raiz for igual
             if dt_root_context and device_root_context and dt_root_context != device_root_context:
                 continue
 
-            # device_text inclui device name, type, metadata, property name/type
             device_text = f"{device_name_norm} {device_type_norm} {metadata_norm} {property_name_norm} {property_type_norm}"
 
-            device_embedding = model.encode(device_text, convert_to_tensor=True)
-            score = float(util.cos_sim(dt_embedding, device_embedding)[0][0])
-
-            # Debug: printa o score de todos os devices
-            # print(f"[MIDDTS][DEBUG] DT: '{dt_text}' vs Device: '{device_text}' = {score:.4f}")
+            score = compute_similarity(dt_text, device_text)
 
             if score > best_score:
                 best_device_text = device_text
-                best_match = property
+                best_match = prop
                 best_score = score
+
         if best_match and best_score >= 0.60:
             self.device_property = best_match
             print(f"[MIDDTS] Associação automática: '{self.property.name}' (DT: {dt_text}) → '{best_match.name}' (Device: {best_device_text}) (score: {best_score:.2f})")

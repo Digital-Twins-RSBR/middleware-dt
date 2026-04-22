@@ -168,6 +168,84 @@ class DTDLSpecificationSchema(BaseModel):
 class CreateMultipleDTDLModelsSchema(BaseModel):
     specifications: List[DTDLSpecificationSchema]
 
+
+class AutoBindingPreviewRequestSchema(Schema):
+    threshold: float = 0.60
+    only_unbound: bool = True
+    causal_only: bool = True
+    limit: int = 200
+    allow_device_property_reuse: bool = False
+    device_ids: Optional[List[int]] = None
+    gateway_ids: Optional[List[int]] = None
+
+
+class AutoBindingCandidateSchema(Schema):
+    dt_property_id: int
+    dt_instance_id: int
+    dt_instance_name: str
+    dt_property_name: str
+    dt_model_name: str
+    device_property_id: int
+    device_property_name: str
+    device_id: int
+    device_name: str
+    score: float
+
+
+class AutoBindingPreviewResponseSchema(Schema):
+    system_id: int
+    threshold: float
+    candidates: List[AutoBindingCandidateSchema]
+
+
+class AutoBindingApplyRequestSchema(Schema):
+    threshold: float = 0.60
+    only_unbound: bool = True
+    causal_only: bool = True
+    allow_device_property_reuse: bool = False
+    overwrite_existing: bool = False
+    limit: int = 200
+    device_ids: Optional[List[int]] = None
+    gateway_ids: Optional[List[int]] = None
+
+
+class AutoBindingApplyResponseSchema(Schema):
+    system_id: int
+    threshold: float
+    evaluated: int
+    applied: int
+    skipped: int
+    details: List[AutoBindingCandidateSchema]
+
+
+class InfluxTemporalQuerySchema(Schema):
+    # Prefer DT-centric queries: specify either `device_identifier` OR
+    # `dt_property_id` OR (`dtinstance_id` + `property_name`).
+    device_identifier: Optional[str] = None
+    dt_property_id: Optional[int] = None
+    dtinstance_id: Optional[int] = None
+    property_name: Optional[str] = None
+    measurement: str = "latency_measurement"
+    start: Optional[str] = None
+    stop: Optional[str] = None
+    last_minutes: int = 60
+    limit: int = 500
+
+
+class TemporalPointSchema(Schema):
+    time: str
+    measurement: str
+    field: str
+    value: Any
+    device_identifier: Optional[str] = None
+    tags: Dict[str, Any] = {}
+
+
+class InfluxTemporalQueryResponseSchema(Schema):
+    system_id: int
+    device_identifier: Optional[str] = None
+    points: List[TemporalPointSchema]
+
 class AssociatedPropertySchema(ModelSchema):
     property_name: str
     device_property_name: str

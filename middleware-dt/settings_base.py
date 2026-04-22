@@ -80,6 +80,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
+    'core.middleware.JWTAuthMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'corsheaders.middleware.CorsMiddleware',
 ]
@@ -223,3 +224,10 @@ DEFAULT_INACTIVITY_TIMEOUT = 60
 # Controla integração com Neo4j. Por padrão desabilitado para evitar tentativas
 # de conexão em ambientes que não têm Neo4j disponível.
 USE_NEO4J = _env_bool('USE_NEO4J', False)
+
+# Cypher query execution settings: timeout (seconds) and maximum rows returned
+# These can be overridden via environment variables `CYPHER_QUERY_TIMEOUT` and
+# `CYPHER_QUERY_MAX_ROWS`.
+# Default timeout increased to 30s to accommodate potentially slower Neo4j responses.
+CYPHER_QUERY_TIMEOUT = int(os.getenv('CYPHER_QUERY_TIMEOUT', 30))
+CYPHER_QUERY_MAX_ROWS = int(os.getenv('CYPHER_QUERY_MAX_ROWS', 1000))

@@ -7,6 +7,11 @@ from core.models import Organization, OrganizationMembership
 from facade.models import Property
 from orchestrator.schemas import (
     AssociatePropertySchema,
+    AutoBindingApplyRequestSchema,
+    AutoBindingApplyResponseSchema,
+    AutoBindingCandidateSchema,
+    AutoBindingPreviewRequestSchema,
+    AutoBindingPreviewResponseSchema,
     AssociatedPropertySchema,
     BindDTInstancePropertieDeviceSchema,
     CreateDTFromDTDLModelSchema,
@@ -18,8 +23,11 @@ from orchestrator.schemas import (
     DigitalTwinInstanceRelationshipModelSchema,
     DigitalTwinInstanceRelationshipSchema,
     DigitalTwinPropertyUpdateSchema,
+    InfluxTemporalQueryResponseSchema,
+    InfluxTemporalQuerySchema,
     PutDTDLModelSchema,
     SystemContextSchema,
+    TemporalPointSchema,
     CreateSystemContextSchema,
     CreateDTDLModelSchema,
     DTDLModelSchema,
@@ -43,45 +51,38 @@ from typing import List
 from django.db import transaction
 from ninja import Schema
 from sentence_transformers import SentenceTransformer, util
+from orchestrator.utils import normalize_name
+from django.conf import settings
+from django.utils.text import slugify
+import csv
+import io
+import requests
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 router = Router()
 
-
-def _get_user_organizations(user):
-    if getattr(user, "is_superuser", False):
-        return Organization.objects.all()
-    if not user or not getattr(user, "is_authenticated", False):
-        return Organization.objects.none()
-    return Organization.objects.filter(memberships__user=user).distinct()
-
-
-def _resolve_current_organization(request, organization_id: int = None):
-    organizations = _get_user_organizations(getattr(request, "user", None))
-    if organization_id is not None:
-        return organizations.filter(id=organization_id).first()
-    return organizations.first() if organizations.count() == 1 else None
-
-
-def _scope_systems_to_organization(queryset, request):
-    user = getattr(request, "user", None)
-    if getattr(user, "is_superuser", False):
-        return queryset
-    if not user or not getattr(user, "is_authenticated", False):
-        return queryset.none()
-    return queryset.filter(organization__memberships__user=user).distinct()
-
-
-def _get_scoped_system_or_404(request, system_id: int):
-    return get_object_or_404(_scope_systems_to_organization(SystemContext.objects.all(), request), id=system_id)
-
-
-def _scope_properties_to_organization(queryset, request):
-    user = getattr(request, "user", None)
-    if getattr(user, "is_superuser", False):
-        return queryset
-    if not user or not getattr(user, "is_authenticated", False):
-        return queryset.none()
-    return queryset.filter(device__organization__memberships__user=user).distinct()
+from .helpers import (
+    _get_user_organizations,
+    _resolve_current_organization,
+    _scope_systems_to_organization,
+    _get_scoped_system_or_404,
+    _scope_properties_to_organization,
+    _scope_system_properties,
+    _filter_candidate_device_properties,
+    _load_sentence_model,
+    _build_dt_property_text,
+    _build_device_property_text,
+    _to_canonical_slug,
+    _canonical_slug_similarity,
+    _build_dt_property_canonical,
+    _build_device_property_canonical,
+    _tokenize_for_matching,
+    _extract_identifier_tokens,
+    _compute_hybrid_match_score,
+    _suggest_autobinding_candidates,
+    _parse_influx_csv_points,
+    compute_similarity,
+)
 
 
 @router.post(
@@ -248,6 +249,80 @@ def create_dtdlmodels_batch(
         raise HttpError(400, str(e))
 
 
+@router.get(
+    "/systems/{system_id}/neo4j/test/",
+    tags=["Orchestrator"],
+    summary="Quick Neo4j connectivity/test endpoint",
+    description="Runs a small read Cypher query against Neo4j and returns a serialized sample of nodes/relationships. Useful to verify connectivity and inspect DB contents.",
+)
+def neo4j_test(request, system_id: int):
+    try:
+        _get_scoped_system_or_404(request, system_id)
+        if not getattr(settings, 'USE_NEO4J', False):
+            raise HttpError(400, "Neo4j integration is disabled (USE_NEO4J=False)")
+
+        sample_query = "MATCH (n) RETURN n LIMIT 25"
+
+        def _run_query(q):
+            return db.cypher_query(q)
+
+        timeout_val = getattr(settings, 'CYPHER_QUERY_TIMEOUT', 10)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as _executor:
+                future = _executor.submit(_run_query, sample_query)
+                results, meta = future.result(timeout=timeout_val)
+        except FuturesTimeout:
+            try:
+                future.cancel()
+            except Exception:
+                pass
+            raise HttpError(504, f"Neo4j test query timed out after {timeout_val} seconds")
+
+        def _serialize(value):
+            if isinstance(value, neo4j.graph.Node):
+                return {"identity": value.id, "labels": list(value.labels), "properties": dict(value)}
+            if isinstance(value, neo4j.graph.Relationship):
+                return {"id": value.id, "type": value.type, "start": value.start_node.id, "end": value.end_node.id, "properties": dict(value)}
+            if isinstance(value, list):
+                return [_serialize(v) for v in value]
+            if isinstance(value, dict):
+                return {k: _serialize(v) for k, v in value.items()}
+            return value
+
+        out = []
+        for rec in results:
+            if isinstance(rec, list):
+                out.append([_serialize(it) for it in rec])
+            elif isinstance(rec, dict):
+                out.append({k: _serialize(v) for k, v in rec.items()})
+            else:
+                out.append(_serialize(rec))
+
+        return {"results": out, "meta_keys": meta}
+    except neo4j.exceptions.ServiceUnavailable:
+        raise HttpError(400, "Neo4j service is unavailable.")
+    except Exception as e:
+        raise HttpError(400, str(e))
+
+
+@router.get(
+    "/orchestrator/debug-auth/",
+    tags=["Orchestrator"],
+    summary="Debug current request user",
+)
+def debug_auth(request):
+    user = getattr(request, 'user', None)
+    try:
+        username = getattr(user, 'username', None)
+        is_auth = getattr(user, 'is_authenticated', False)
+        user_id = getattr(user, 'id', None)
+    except Exception:
+        username = None
+        is_auth = False
+        user_id = None
+    return {"username": username, "is_authenticated": bool(is_auth), "user_id": user_id}
+
+
 @router.post(
     "/systems/{system_id}/instances/",
     response=DigitalTwinInstanceSchema,
@@ -349,10 +424,13 @@ def bind_dtinstance_device(
     dtproperty = DigitalTwinInstanceProperty.objects.filter(
         id=payload_data["property_id"], dtinstance=dtinstance
     ).first()
-    dtproperty.device_property = _scope_properties_to_organization(Property.objects.all(), request).filter(
+    device_property = _scope_properties_to_organization(Property.objects.all(), request).filter(
         id=payload_data["device_property_id"]
     ).first()
-    dtproperty.save()
+    if not dtproperty or not device_property:
+        raise HttpError(404, "Property binding target not found.")
+    DigitalTwinInstanceProperty.objects.filter(pk=dtproperty.pk).update(device_property=device_property)
+    dtproperty.device_property = device_property
     return dtinstance
 
 
@@ -403,11 +481,16 @@ def update_causal_property(
         try:
             import time
             from facade.utils import format_influx_line
-            from middleware_dt.settings import INFLUXDB_TOKEN, INFLUXDB_URL, USE_INFLUX_TO_EVALUATE, ENABLE_INFLUX_LATENCY_MEASUREMENTS
-            
+            from django.conf import settings as _dj_settings
+
+            INFLUXDB_TOKEN = getattr(_dj_settings, 'INFLUXDB_TOKEN', None)
+            INFLUXDB_URL = getattr(_dj_settings, 'INFLUXDB_URL', None)
+            USE_INFLUX_TO_EVALUATE = getattr(_dj_settings, 'USE_INFLUX_TO_EVALUATE', False)
+            ENABLE_INFLUX_LATENCY_MEASUREMENTS = getattr(_dj_settings, 'ENABLE_INFLUX_LATENCY_MEASUREMENTS', False)
+
             print(f"[DEBUG] M2S response received for property {property_obj.name}")
             print(f"[DEBUG] correlation_id from payload: {getattr(payload, 'correlation_id', None)}")
-            
+
             if (USE_INFLUX_TO_EVALUATE and ENABLE_INFLUX_LATENCY_MEASUREMENTS and INFLUXDB_TOKEN and 
                 property_obj.device_property and property_obj.device_property.device):
                 response_timestamp = int(time.time() * 1000)
@@ -598,6 +681,8 @@ def list_associated_properties(request, system_id: int):
     "/systems/{system_id}/instances/{dtinstance_id}/properties/{property_id}/connect/",
     response=AssociatePropertySchema,
     tags=["Orchestrator"],
+    summary="Associate a DT property to a specific device property",
+    description="Manual binding endpoint. Use this when you want deterministic association instead of semantic autobinding.",
 )
 def associate_property(
     request,
@@ -615,9 +700,9 @@ def associate_property(
             DigitalTwinInstanceProperty, id=property_id, dtinstance=dtinstance
         )
         device_property = get_object_or_404(_scope_properties_to_organization(Property.objects.all(), request), id=payload.device_property_id)
-        
+
+        DigitalTwinInstanceProperty.objects.filter(pk=dtproperty.pk).update(device_property=device_property)
         dtproperty.device_property = device_property
-        dtproperty.save()
         
         return dtproperty
     except DigitalTwinInstance.DoesNotExist:
@@ -630,7 +715,308 @@ def associate_property(
         raise HttpError(400, str(e))
 
 
-@router.post("/systems/{system_id}/instances/query/", tags=["Orchestrator"])
+@router.post(
+    "/systems/{system_id}/instances/autobinding/preview/",
+    response=AutoBindingPreviewResponseSchema,
+    tags=["Orchestrator"],
+    summary="Preview semantic autobinding suggestions",
+    description="Runs semantic matching between DT causal properties and device properties without persisting changes.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "default": {
+                            "value": {
+                                "threshold": 0.65,
+                                "only_unbound": True,
+                                "causal_only": True,
+                                "allow_device_property_reuse": False,
+                                "gateway_ids": [1],
+                                "limit": 50
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
+def preview_autobinding(request, system_id: int, payload: AutoBindingPreviewRequestSchema):
+    system_context = _get_scoped_system_or_404(request, system_id)
+    candidates = _suggest_autobinding_candidates(system_context, payload)
+    return AutoBindingPreviewResponseSchema(
+        system_id=system_context.id,
+        threshold=float(payload.threshold),
+        candidates=candidates,
+    )
+
+
+@router.post(
+    "/systems/{system_id}/instances/autobinding/apply/",
+    response=AutoBindingApplyResponseSchema,
+    tags=["Orchestrator"],
+    summary="Apply semantic autobinding",
+    description="Persists semantic autobinding suggestions according to threshold and overwrite rules.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "safe_apply": {
+                            "value": {
+                                "threshold": 0.70,
+                                "only_unbound": True,
+                                "causal_only": True,
+                                "allow_device_property_reuse": False,
+                                "overwrite_existing": False,
+                                "gateway_ids": [1],
+                                "limit": 100
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
+def apply_autobinding(request, system_id: int, payload: AutoBindingApplyRequestSchema):
+    system_context = _get_scoped_system_or_404(request, system_id)
+    preview_payload = AutoBindingPreviewRequestSchema(
+        threshold=payload.threshold,
+        only_unbound=payload.only_unbound,
+        causal_only=payload.causal_only,
+        limit=payload.limit,
+        allow_device_property_reuse=payload.allow_device_property_reuse,
+        device_ids=payload.device_ids,
+        gateway_ids=payload.gateway_ids,
+    )
+    candidates = _suggest_autobinding_candidates(system_context, preview_payload)
+
+    evaluated = len(candidates)
+    applied = 0
+    skipped = 0
+    applied_details = []
+
+    with transaction.atomic():
+        for candidate in candidates:
+            dtip = DigitalTwinInstanceProperty.objects.filter(
+                id=candidate.dt_property_id,
+                dtinstance__model__system=system_context,
+            ).first()
+            device_property = _scope_system_properties(system_context).filter(
+                id=candidate.device_property_id
+            ).first()
+
+            if not dtip or not device_property:
+                skipped += 1
+                continue
+
+            if dtip.device_property_id and not payload.overwrite_existing:
+                skipped += 1
+                continue
+
+            if (not payload.allow_device_property_reuse and
+                DigitalTwinInstanceProperty.objects.filter(device_property=device_property).exclude(id=dtip.id).exists()):
+                skipped += 1
+                continue
+
+            DigitalTwinInstanceProperty.objects.filter(pk=dtip.pk).update(device_property=device_property)
+            dtip.device_property = device_property
+            applied += 1
+            applied_details.append(candidate)
+
+    return AutoBindingApplyResponseSchema(
+        system_id=system_context.id,
+        threshold=float(payload.threshold),
+        evaluated=evaluated,
+        applied=applied,
+        skipped=skipped,
+        details=applied_details,
+    )
+
+
+@router.post(
+    "/systems/{system_id}/timeseries/query/",
+    response=InfluxTemporalQueryResponseSchema,
+    tags=["Orchestrator"],
+    summary="Query temporal data from InfluxDB",
+    description="Queries time series with organization and system scope checks. Requires device_identifier for strict scoping.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "last_2h_temperature": {
+                            "value": {
+                                "device_identifier": "b6ac7f00-6f6c-11ef-987f-9f26ab123456",
+                                "property_name": "temperature",
+                                "measurement": "latency_measurement",
+                                "last_minutes": 120,
+                                "limit": 300
+                            }
+                        }
+                        ,
+                        "from_dt_property": {
+                            "value": {
+                                "dt_property_id": 42,
+                                "measurement": "latency_measurement",
+                                "last_minutes": 60,
+                                "limit": 200
+                            }
+                        },
+                        "from_dtinstance_and_property": {
+                            "value": {
+                                "dtinstance_id": 15,
+                                "property_name": "status",
+                                "measurement": "latency_measurement",
+                                "last_minutes": 30,
+                                "limit": 100
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
+def query_temporal_data(request, system_id: int, payload: InfluxTemporalQuerySchema):
+    system_context = _get_scoped_system_or_404(request, system_id)
+
+    # Resolve device_identifier and property_name from DT-centric inputs when provided
+    device_identifier = None
+    property_name = payload.property_name
+
+    if getattr(payload, 'dt_property_id', None):
+        dtip = DigitalTwinInstanceProperty.objects.filter(
+            id=payload.dt_property_id,
+            dtinstance__model__system=system_context,
+        ).select_related('device_property', 'device_property__device').first()
+        if not dtip:
+            raise HttpError(404, "DigitalTwinInstanceProperty not found in the given system")
+        if not dtip.device_property or not getattr(dtip.device_property, 'device', None) or not getattr(dtip.device_property.device, 'identifier', None):
+            raise HttpError(409, "Digital twin property is not bound to a device")
+        device_identifier = dtip.device_property.device.identifier
+        property_name = property_name or (dtip.property.name if dtip.property else None)
+    elif getattr(payload, 'dtinstance_id', None) and getattr(payload, 'property_name', None):
+        dtip = DigitalTwinInstanceProperty.objects.filter(
+            dtinstance__model__system=system_context,
+            dtinstance__id=payload.dtinstance_id,
+            property__name=payload.property_name,
+        ).select_related('device_property', 'device_property__device').first()
+        if not dtip:
+            raise HttpError(404, "DigitalTwinInstanceProperty not found for given dtinstance and property")
+        if not dtip.device_property or not getattr(dtip.device_property, 'device', None) or not getattr(dtip.device_property.device, 'identifier', None):
+            raise HttpError(409, "Digital twin property is not bound to a device")
+        device_identifier = dtip.device_property.device.identifier
+        property_name = payload.property_name
+    else:
+        device_identifier = payload.device_identifier
+
+    if not device_identifier:
+        raise HttpError(400, "device_identifier or dt_property_id or (dtinstance_id + property_name) is required for scoped temporal queries")
+
+    scoped_props = _scope_system_properties(system_context).filter(device__identifier=device_identifier)
+    if not scoped_props.exists():
+        raise HttpError(404, "Device not found in the current organization scope")
+
+    system_bound_props = DigitalTwinInstanceProperty.objects.filter(
+        dtinstance__model__system=system_context,
+        device_property__device__identifier=device_identifier,
+    )
+    if not system_bound_props.exists():
+        raise HttpError(409, "Device is in the organization scope but is not currently bound to the requested system")
+
+    influx_token = getattr(settings, "INFLUXDB_TOKEN", None)
+    influx_org = getattr(settings, "INFLUXDB_ORGANIZATION", None)
+    influx_bucket = getattr(settings, "INFLUXDB_BUCKET", None)
+    influx_host = getattr(settings, "INFLUXDB_HOST", "influxdb")
+    influx_port = int(getattr(settings, "INFLUXDB_PORT", 8086))
+    if not influx_token or not influx_org or not influx_bucket:
+        raise HttpError(400, "InfluxDB is not fully configured")
+
+    measurement = payload.measurement or "latency_measurement"
+    limit = max(1, min(int(payload.limit), 5000))
+    if payload.start and payload.stop:
+        range_clause = f'|> range(start: time(v: "{payload.start}"), stop: time(v: "{payload.stop}"))'
+    else:
+        last_minutes = max(1, int(payload.last_minutes))
+        range_clause = f"|> range(start: -{last_minutes}m)"
+
+    field_filter = ""
+    if property_name:
+        field_filter = f'|> filter(fn: (r) => r["_field"] == "{property_name}")'
+
+    flux_query = (
+        f'from(bucket: "{influx_bucket}")\n'
+        f'{range_clause}\n'
+        f'|> filter(fn: (r) => r["_measurement"] == "{measurement}")\n'
+        f'|> filter(fn: (r) => r["sensor"] == "{payload.device_identifier}")\n'
+        f'{field_filter}\n'
+        f'|> sort(columns: ["_time"], desc: false)\n'
+        f'|> limit(n: {limit})'
+    )
+
+    query_url = f"http://{influx_host}:{influx_port}/api/v2/query?org={influx_org}"
+    response = requests.post(
+        query_url,
+        headers={
+            "Authorization": f"Token {influx_token}",
+            "Content-Type": "application/vnd.flux",
+            "Accept": "text/csv",
+        },
+        data=flux_query,
+        timeout=10,
+    )
+    if response.status_code != 200:
+        raise HttpError(response.status_code, response.text)
+
+    raw_points = _parse_influx_csv_points(response.text)
+    points = []
+    for row in raw_points:
+        points.append(
+            TemporalPointSchema(
+                time=row.get("_time", ""),
+                measurement=row.get("_measurement", ""),
+                field=row.get("_field", ""),
+                value=row.get("_value"),
+                device_identifier=row.get("sensor"),
+                tags={
+                    "direction": row.get("direction"),
+                    "source": row.get("source"),
+                    "correlation_id": row.get("correlation_id"),
+                },
+            )
+        )
+
+    return InfluxTemporalQueryResponseSchema(
+        system_id=system_context.id,
+        device_identifier=payload.device_identifier,
+        points=points,
+    )
+
+
+@router.post(
+    "/systems/{system_id}/instances/query/",
+    tags=["Orchestrator"],
+    summary="Execute scoped Cypher query",
+    description="Executes a Cypher query anchored on dt_filter nodes constrained to the requested system context.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "scoped_traversal": {
+                            "value": {
+                                "query": "MATCH (dt_filter)-[r]->(n) RETURN dt_filter, r, n LIMIT 25"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
 def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
     def serialize_neo4j_value(value):
         if isinstance(value, neo4j.graph.Node):
@@ -663,13 +1049,30 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
 
     try:
         system_context = _get_scoped_system_or_404(request, system_id)
-        # Modifica a consulta Cypher para incluir o filtro system_id e trazer os relacionamentos
+        if "dt_filter" not in payload.query:
+            raise HttpError(400, "Cypher query must reference alias 'dt_filter' to keep system scoping")
+
         filtered_query = f'''
-        MATCH (system:SystemContext {{system_id: {system_context.system_id}}})-[:CONTAINS]->(dt_filter:DigitalTwin)
+        MATCH (system:SystemContext {{system_id: {system_context.id}}})-[:CONTAINS]->(dt_filter:DigitalTwin)
         WITH dt_filter
         {payload.query}
         '''
-        results, meta = db.cypher_query(filtered_query)
+
+        def _run_query(q):
+            return db.cypher_query(q)
+
+        timeout_val = getattr(settings, 'CYPHER_QUERY_TIMEOUT', 10)
+        max_rows = getattr(settings, 'CYPHER_QUERY_MAX_ROWS', 1000)
+        try:
+            with ThreadPoolExecutor(max_workers=1) as _executor:
+                future = _executor.submit(_run_query, filtered_query)
+                results, meta = future.result(timeout=timeout_val)
+        except FuturesTimeout:
+            try:
+                future.cancel()
+            except Exception:
+                pass
+            raise HttpError(504, f"Cypher query timed out after {timeout_val} seconds")
         # Convert results to a list of dictionaries
         results_list = []
         for record in results:
@@ -678,6 +1081,10 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
             else:
                 record_dict = {key: serialize_neo4j_value(value) for key, value in record.items()}
             results_list.append(record_dict)
+        # Enforce max rows configured to avoid returning huge result sets
+        if len(results_list) > max_rows:
+            results_list = results_list[:max_rows]
+
         return {"results": results_list, "keys": meta}
     except neo4j.exceptions.CypherSyntaxError as e:
         raise HttpError(400, str(e))
@@ -687,8 +1094,38 @@ def execute_cypher_query(request, system_id: int, payload: CypherQuerySchema):
         raise HttpError(400, str(e))
 
 
-@router.post("/systems/{system_id}/instances/hierarchical/", tags=["Orchestrator"])
-def create_hierarchical_instances(request, system_id: int, data: dict = Body(...)):
+@router.post(
+    "/systems/{system_id}/instances/hierarchical/",
+    tags=["Orchestrator"],
+    summary="Create hierarchical digital twin instances",
+    description="Creates DT instances from a tree payload and infers the best DTDL model per node with configurable semantic threshold.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "house_tree": {
+                            "value": {
+                                "House 1": {
+                                    "Room 1": {
+                                        "LightBulb 1": {},
+                                        "AirConditioner 1": {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
+def create_hierarchical_instances(
+    request,
+    system_id: int,
+    data: dict = Body(...),
+    similarity_threshold: float = 0.60,
+):
     system_context = _get_scoped_system_or_404(request, system_id)
     """
     Cria instâncias de Digital Twins a partir de um dicionário hierárquico.
@@ -710,20 +1147,23 @@ def create_hierarchical_instances(request, system_id: int, data: dict = Body(...
         from django.http import JsonResponse
         return JsonResponse({"detail": "Payload deve ser um dicionário JSON."}, status=422)
 
-    model = SentenceTransformer("paraphrase-MiniLM-L6-v2")
+    if similarity_threshold < 0.0 or similarity_threshold > 1.0:
+        raise HttpError(400, "similarity_threshold must be between 0.0 and 1.0")
+
     dtdl_models = list(DTDLModel.objects.filter(system=system_context))
-    model_names = [m.name for m in dtdl_models]
     created_instances = []
 
     def find_best_model(name):
         if not dtdl_models:
             return None, 0.0
-        embeddings = model.encode(model_names, convert_to_tensor=True)
-        query_emb = model.encode(name, convert_to_tensor=True)
-        scores = util.cos_sim(query_emb, embeddings)[0]
-        best_idx = int(scores.argmax())
-        best_score = float(scores[best_idx])
-        if best_score > 0.60:
+        best_idx = None
+        best_score = 0.0
+        for idx, m in enumerate(dtdl_models):
+            score = float(compute_similarity(name, m.name))
+            if score > best_score:
+                best_score = score
+                best_idx = idx
+        if best_idx is not None and best_score >= float(similarity_threshold):
             return dtdl_models[best_idx], best_score
         return None, best_score
 

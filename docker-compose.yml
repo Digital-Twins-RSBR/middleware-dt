@@ -116,9 +116,11 @@ services:
       PGPASSWORD: ${POSTGRES_PASSWORD:-postgres}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      NEO4J_URL: ${NEO4J_URL:-neo4j:7687}
-      NEO4J_USER: ${NEO4J_USER:-neo4j}
-      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-middts123}
+      NEO4J_URL: "bolt://neo4j:7687"
+      NEO4J_BOLT_URL: "bolt://neo4j:7687"
+      NEO4J_USER: "neo4j"
+      NEO4J_PASSWORD: "middts123"
+      USE_NEO4J: "True"
       INFLUXDB_HOST: influxdb
       INFLUXDB_PORT: 8086
       INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-iot_data}
@@ -130,6 +132,11 @@ services:
       TB_HOST: ${MIDDLEWARE_TB_HOST:-demo.thingsboard.io}
       TB_PORT: ${MIDDLEWARE_TB_PORT:-443}
       TB_SCHEME: ${MIDDLEWARE_TB_SCHEME:-https}
+      # Neo4j/Cypher execution tuning
+      CYPHER_QUERY_TIMEOUT: ${CYPHER_QUERY_TIMEOUT:-30}
+      CYPHER_QUERY_MAX_ROWS: ${CYPHER_QUERY_MAX_ROWS:-1000}
+    env_file:
+      - .env
     healthcheck:
       test: ["CMD", "python", "manage.py", "check"]
       interval: 30s

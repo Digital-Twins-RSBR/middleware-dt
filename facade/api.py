@@ -59,11 +59,37 @@ def _scope_to_organization(queryset, request):
     return queryset.filter(organization__memberships__user=user).distinct()
 
 
-@router.get("/devices/", response={200: list[DeviceSchema]}, tags=['Facade'])
+@router.get(
+    "/devices/",
+    response={200: list[DeviceSchema]},
+    tags=['Facade'],
+    summary="List devices in organization scope",
+)
 def list_devices(request):
     return _scope_to_organization(Device.objects.all(), request)
 
-@router.post("/devices/{device_id}/rpc/", response={200: dict}, tags=['Facade'])
+@router.post(
+    "/devices/{device_id}/rpc/",
+    response={200: dict},
+    tags=['Facade'],
+    summary="Send RPC command to a device",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "toggle": {
+                            "value": {
+                                "method": "setStatus",
+                                "params": {"status": True}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
 def call_device_rpc(request, device_id: int, payload: DeviceRPCView):
     import uuid
     user = getattr(request, "user", None)
@@ -93,7 +119,12 @@ def call_device_rpc(request, device_id: int, payload: DeviceRPCView):
     return api.create_response(request, response.json(), status=response.status_code)
 
 
-@router.get("/gatewaysiot/{gateway_id}/discover-devices/", response={200: dict}, tags=['Facade'])
+@router.get(
+    "/gatewaysiot/{gateway_id}/discover-devices/",
+    response={200: dict},
+    tags=['Facade'],
+    summary="Discover devices from ThingsBoard gateway",
+)
 def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Query(...)):
     User = get_user_model()
     # Allow anonymous API calls to trigger discovery for testing: fall back
@@ -310,7 +341,12 @@ def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Q
         return {"created": created_count, "updated": updated_count}
     return api.create_response(request, response.json(), status=response.status_code)
 
-@router.get("/devices/{device_id}/rpc-methods/", response={200: list}, tags=['Facade'])
+@router.get(
+    "/devices/{device_id}/rpc-methods/",
+    response={200: list},
+    tags=['Facade'],
+    summary="List read and write RPC methods mapped for the device",
+)
 def list_device_rpc_methods(request, device_id: int):
     qs = _scope_to_organization(Device.objects.all(), request)
     device = qs.filter(id=device_id).first()
