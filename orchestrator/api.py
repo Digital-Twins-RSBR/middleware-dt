@@ -89,6 +89,17 @@ from .helpers import (
     "/systems/",
     response=SystemContextSchema,
     tags=["Orchestrator"],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "create_system": {"value": {"name": "My Organization System", "description": "Sistema de exemplo"}}
+                    }
+                }
+            }
+        }
+    },
 )
 def create_system(request, payload: CreateSystemContextSchema):
     payload_data = payload.dict()
@@ -107,6 +118,22 @@ def create_system(request, payload: CreateSystemContextSchema):
     "/systems/{system_id}/",
     response=SystemContextSchema,
     tags=["Orchestrator"],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "update_system": {
+                            "value": {
+                                "name": "Updated Organization System",
+                                "description": "Updated system metadata"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
 )
 def update_system(request, system_id: int, payload: CreateSystemContextSchema):
     system = _get_scoped_system_or_404(request, system_id)
@@ -131,7 +158,29 @@ def list_system(request):
 
 
 @router.post(
-    "/systems/{system_id}/dtdlmodels/", response=DTDLModelSchema, tags=["Orchestrator"]
+    "/systems/{system_id}/dtdlmodels/", response=DTDLModelSchema, tags=["Orchestrator"],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "simple_model": {
+                            "value": {
+                                "name": "LightBulbModel",
+                                "specification": {
+                                    "@context": ["dtmi:dtdl:context;2"],
+                                    "@id": "dtmi:example:LightBulb;1",
+                                    "@type": "Interface",
+                                    "displayName": "LightBulb",
+                                    "contents": []
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
 )
 def create_dtdlmodel(request, system_id, payload: CreateDTDLModelSchema):
     user = getattr(request, "user", None)
@@ -145,7 +194,37 @@ def create_dtdlmodel(request, system_id, payload: CreateDTDLModelSchema):
     return dtdlmodel
 
 @router.post(
-    "/systems/{system_id}/dtdlmodels/bulk/", response=List[DTDLModelSchema], tags=["Orchestrator"]
+    "/systems/{system_id}/dtdlmodels/bulk/",
+    response=List[DTDLModelSchema],
+    tags=["Orchestrator"],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "bulk_specs": {
+                            "value": [
+                                {
+                                    "@context": ["dtmi:dtdl:context;2"],
+                                    "@id": "dtmi:example:Room;1",
+                                    "@type": "Interface",
+                                    "displayName": "Room",
+                                    "contents": []
+                                },
+                                {
+                                    "@context": ["dtmi:dtdl:context;2"],
+                                    "@id": "dtmi:example:LightBulb;1",
+                                    "@type": "Interface",
+                                    "displayName": "LightBulb",
+                                    "contents": []
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    },
 )
 def create_multiple_dtdlmodels(request, system_id: int, payload: List[DTDLSpecificationSchema]):
     user = getattr(request, "user", None)
@@ -172,10 +251,94 @@ def create_multiple_dtdlmodels(request, system_id: int, payload: List[DTDLSpecif
         dtdlmodel.create_dtdl_models()
     return created_models
 
+@router.post(
+    "/systems/{system_id}/dtdlmodels/batch/",
+    tags=["Orchestrator"],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "batch_named_models": {
+                            "value": [
+                                {
+                                    "name": "RoomModel",
+                                    "specification": {
+                                        "@context": ["dtmi:dtdl:context;2"],
+                                        "@id": "dtmi:example:Room;1",
+                                        "@type": "Interface",
+                                        "displayName": "Room",
+                                        "contents": []
+                                    }
+                                },
+                                {
+                                    "name": "AirConditionerModel",
+                                    "specification": {
+                                        "@context": ["dtmi:dtdl:context;2"],
+                                        "@id": "dtmi:example:AirConditioner;1",
+                                        "@type": "Interface",
+                                        "displayName": "AirConditioner",
+                                        "contents": []
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
+def create_dtdlmodels_batch(
+    request, system_id: int, payload: List[DTDLModelBatchSchema]
+):
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        raise HttpError(403, "Authentication required")
+    try:
+        system = _get_scoped_system_or_404(request, system_id)
+        created_models = []
+
+        for model_data in payload:
+            dtdl_model, created = DTDLModel.objects.update_or_create(
+                system=system,
+                name=model_data.name,
+                defaults={"specification": model_data.specification, "created_by": user},
+            )
+            created_models.append({"id": dtdl_model.id, "name": dtdl_model.name})
+
+        return {"created_models": created_models}
+    except SystemContext.DoesNotExist:
+        raise HttpError(404, "System not found")
+    except Exception as e:
+        raise HttpError(400, str(e))
+
 @router.put(
     "/systems/{system_id}/dtdlmodels/{dtdlmodel_id}/",
     response=DTDLModelSchema,
     tags=["Orchestrator"],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "update_model": {
+                            "value": {
+                                "name": "UpdatedLightBulbModel",
+                                "specification": {
+                                    "@context": ["dtmi:dtdl:context;2"],
+                                    "@id": "dtmi:example:LightBulb;1",
+                                    "@type": "Interface",
+                                    "displayName": "Updated LightBulb",
+                                    "contents": []
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
 )
 def update_dtdlmodel(
     request, system_id: int, dtdlmodel_id: int, payload: PutDTDLModelSchema
@@ -208,45 +371,19 @@ def list_dtdlmodels(request, system_id: int):
 
 
 @router.get(
-    "/systems/{system_id}/dtdlmodels/{dtdl_model_id}/",
+    "/systems/{system_id}/dtdlmodels/{dtdlmodel_id}/",
     response=DTDLModelSchema,
     tags=["Orchestrator"],
 )
-def get_dtdlmodel(request, system_id: int, dtdl_model_id: int):
+def get_dtdlmodel(request, system_id: int, dtdlmodel_id: int):
     _get_scoped_system_or_404(request, system_id)
-    dtdlmodel = DTDLModel.objects.filter(system_id=system_id, id=dtdl_model_id).first()
+    dtdlmodel = DTDLModel.objects.filter(system_id=system_id, id=dtdlmodel_id).first()
     if not dtdlmodel:
         raise HttpError(
                 404,
                 "No DTDLModel matches the given query.",
             )
     return dtdlmodel
-
-
-@router.post("/systems/{system_id}/dtdlmodels/batch/", tags=["Orchestrator"])
-def create_dtdlmodels_batch(
-    request, system_id: int, payload: List[DTDLModelBatchSchema]
-):
-    user = getattr(request, "user", None)
-    if not user or not getattr(user, "is_authenticated", False):
-        raise HttpError(403, "Authentication required")
-    try:
-        system = _get_scoped_system_or_404(request, system_id)
-        created_models = []
-
-        for model_data in payload:
-            dtdl_model, created = DTDLModel.objects.update_or_create(
-                system=system,
-                name=model_data.name,
-                defaults={"specification": model_data.specification, "created_by": user},
-            )
-            created_models.append({"id": dtdl_model.id, "name": dtdl_model.name})
-
-        return {"created_models": created_models}
-    except SystemContext.DoesNotExist:
-        raise HttpError(404, "System not found")
-    except Exception as e:
-        raise HttpError(400, str(e))
 
 
 @router.get(
@@ -327,6 +464,21 @@ def debug_auth(request):
     "/systems/{system_id}/instances/",
     response=DigitalTwinInstanceSchema,
     tags=["Orchestrator"],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "default": {
+                            "value": {
+                                "dtdl_model_id": 1
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
 )
 def create_dtinstance(request, system_id: int, payload: CreateDTFromDTDLModelSchema):
     payload_data = payload.dict()
@@ -349,7 +501,21 @@ def create_dtinstance(request, system_id: int, payload: CreateDTFromDTDLModelSch
     return dt_instance
 
 
-@router.post("/systems/{system_id}/instances/batch/", tags=["Orchestrator"])
+@router.post(
+    "/systems/{system_id}/instances/batch/",
+    tags=["Orchestrator"],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "batch_create": {"value": {"dtdl_model_ids": [1, 2, 3]}}
+                    }
+                }
+            }
+        }
+    },
+)
 def create_instances_batch(request, system_id: int, payload: DTDLModelIDSchema):
     try:
         user = getattr(request, "user", None)
@@ -404,6 +570,22 @@ def get_instance(request, system_id: int, dtinstance_id: int):
     "/systems/{system_id}/instances/{dtinstance_id}/bind/",
     response=DigitalTwinInstanceSchema,
     tags=["Orchestrator"],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "bind_property": {
+                            "value": {
+                                "property_id": 10,
+                                "device_property_id": 55
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
 )
 def bind_dtinstance_device(
     request,
@@ -439,6 +621,28 @@ def bind_dtinstance_device(
     response=DigitalTwinInstancePropertySchema,
     tags=["Orchestrator"],
     summary="Update a causal property of a digital twin instance",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "boolean_update": {
+                            "value": {
+                                "value": True,
+                                "correlation_id": "rpc-12345"
+                            }
+                        },
+                        "numeric_update": {
+                            "value": {
+                                "value": 23.5,
+                                "correlation_id": "rpc-67890"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
 )
 def update_causal_property(
     request,
@@ -461,7 +665,7 @@ def update_causal_property(
         if not property_obj.causal:
             raise HttpError(
                 400,
-                f"Property '{property_obj.name}' is not causal and cannot be updated.",
+                f"Property '{property_obj.property.name}' is not causal and cannot be updated.",
             )
 
         # # Valida o tipo do valor fornecido
@@ -488,7 +692,7 @@ def update_causal_property(
             USE_INFLUX_TO_EVALUATE = getattr(_dj_settings, 'USE_INFLUX_TO_EVALUATE', False)
             ENABLE_INFLUX_LATENCY_MEASUREMENTS = getattr(_dj_settings, 'ENABLE_INFLUX_LATENCY_MEASUREMENTS', False)
 
-            print(f"[DEBUG] M2S response received for property {property_obj.name}")
+            print(f"[DEBUG] M2S response received for property {property_obj.property.name}")
             print(f"[DEBUG] correlation_id from payload: {getattr(payload, 'correlation_id', None)}")
 
             if (USE_INFLUX_TO_EVALUATE and ENABLE_INFLUX_LATENCY_MEASUREMENTS and INFLUXDB_TOKEN and 
@@ -506,7 +710,7 @@ def update_causal_property(
                 fields = {
                     "received_timestamp": response_timestamp,
                     "status": 1.0 if payload.value else 0.0,
-                    property_obj.name: (1.0 if payload.value else 0.0) if isinstance(payload.value, bool) else float(payload.value)
+                    property_obj.property.name: (1.0 if payload.value else 0.0) if isinstance(payload.value, bool) else float(payload.value)
                 }
                 data = format_influx_line("latency_measurement", tags, fields, timestamp=response_timestamp)
                 
@@ -581,7 +785,21 @@ def list_relationships(request, system_id: int):
     except Exception as e:
         raise HttpError(400, str(e))
 
-@router.post("/systems/{system_id}/instances/relationships/", tags=["Orchestrator"])
+@router.post(
+    "/systems/{system_id}/instances/relationships/",
+    tags=["Orchestrator"],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "create_relationships": {"value": [{"relationship_name": "contains", "source_instance_id": 1, "target_instance_id": 2}]}
+                    }
+                }
+            }
+        }
+    },
+)
 def create_relationships(
     request, system_id: int, relationships: List[DigitalTwinInstanceRelationshipSchema]
 ): 
@@ -623,7 +841,21 @@ def create_relationships(
         raise HttpError(400, str(e))
 
 
-@router.delete("/systems/{system_id}/relationships/", tags=["Orchestrator"])
+@router.delete(
+    "/systems/{system_id}/relationships/",
+    tags=["Orchestrator"],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "delete_relationships": {"value": [{"relationship_name": "contains", "source_instance_id": 1, "target_instance_id": 2}]}
+                    }
+                }
+            }
+        }
+    },
+)
 def delete_relationships(request, system_id: int, relationships: List[DigitalTwinInstanceRelationshipSchema]):
     try:
         system_context = _get_scoped_system_or_404(request, system_id)
@@ -683,6 +915,22 @@ def list_associated_properties(request, system_id: int):
     tags=["Orchestrator"],
     summary="Associate a DT property to a specific device property",
     description="Manual binding endpoint. Use this when you want deterministic association instead of semantic autobinding.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "manual_connect": {
+                            "value": {
+                                "property_id": 10,
+                                "device_property_id": 55
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
 )
 def associate_property(
     request,

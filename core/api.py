@@ -5,7 +5,6 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from ninja import Router, NinjaAPI
 from typing import List
-import jwt
 import requests
 from datetime import datetime, timedelta
 from .models import GatewayIOT, Organization, OrganizationMembership
@@ -16,19 +15,6 @@ from rest_framework_simplejwt.tokens import RefreshToken
 router = Router()
 api = NinjaAPI()
 
-SECRET_KEY = settings.SECRET_KEY # Replace with your actual secret key
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-def create_access_token(data: dict, expires_delta: timedelta = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
 
 
 def get_user_organizations(user):
@@ -60,7 +46,32 @@ def validate_membership_role(role: str):
     return role in valid_roles
 
 
-@router.post("/users/", tags=['Core'])
+@router.post(
+    "/users/",
+    tags=['Core'],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "default": {
+                            "value": {
+                                "username": "operator01",
+                                "password": "strongpass123",
+                                "email": "operator01@example.com",
+                                "first_name": "Ana",
+                                "last_name": "Silva",
+                                "is_staff": True,
+                                "organization_id": 1,
+                                "role": "member"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
 def create_user(request, payload: CreateUserSchema):
     User = get_user_model()
     if User.objects.filter(username=payload.username).exists():
@@ -112,7 +123,27 @@ def create_user(request, payload: CreateUserSchema):
     return {"id": user.id, "username": user.username, "is_staff": user.is_staff, "organization_id": target_organization.id if target_organization else None, "role": payload.role if target_organization else None}
 
 
-@router.post("/organizations/", response=OrganizationSchema, tags=['Core'])
+@router.post(
+    "/organizations/",
+    response=OrganizationSchema,
+    tags=['Core'],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "default": {
+                            "value": {
+                                "name": "Smart Building Org",
+                                "description": "Organization for DT and IoT assets"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
 def create_organization(request, payload: CreateOrganizationSchema):
     user = getattr(request, "user", None)
     if not user or not getattr(user, "is_authenticated", False) or not getattr(user, "is_superuser", False):
@@ -131,7 +162,26 @@ def list_organizations(request):
     return list(get_user_organizations(getattr(request, "user", None)))
 
 
-@router.post("/organizations/{organization_id}/members/", tags=['Core'])
+@router.post(
+    "/organizations/{organization_id}/members/",
+    tags=['Core'],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "default": {
+                            "value": {
+                                "user_id": 2,
+                                "role": "member"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
 def add_organization_member(request, organization_id: int, payload: AddOrganizationMemberSchema):
     user = getattr(request, "user", None)
     if not user or not getattr(user, "is_authenticated", False):
@@ -151,13 +201,48 @@ def add_organization_member(request, organization_id: int, payload: AddOrganizat
 
 @router.post("/token/", response=dict, tags=['Auth'])
 def login(request, username: str, password: str):
+    # Deprecated: prefer /token/ handled by SimpleJWT `obtain_token` below.
     user = authenticate(request, username=username, password=password)
     if not user:
         return {"error": "Invalid credentials"}, 400
-    access_token = create_access_token(data={"sub": user.username})
-    return {"access_token": access_token, "token_type": "bearer"}
+    # Return a simple acknowledgement; use the SimpleJWT endpoints instead.
+    return {"detail": "Use /api/core/token/ to obtain JWT via SimpleJWT."}
 
-@router.post("/gatewaysiot/", response=GatewayIOTSchema, tags=['Core'])
+@router.post(
+    "/gatewaysiot/",
+    response=GatewayIOTSchema,
+    tags=['Core'],
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "jwt_gateway": {
+                            "value": {
+                                "name": "ThingsBoard Main Gateway",
+                                "url": "http://thingsboard:9090",
+                                "auth_method": "jwt",
+                                "username": "tenant@thingsboard.org",
+                                "password": "tenant",
+                                "api_key": None
+                            }
+                        },
+                        "api_key_gateway": {
+                            "value": {
+                                "name": "ThingsBoard Edge Gateway",
+                                "url": "http://thingsboard:9090",
+                                "auth_method": "api_key",
+                                "username": None,
+                                "password": None,
+                                "api_key": "TB_API_KEY_EXAMPLE"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
 def create_gateway(request, payload: CreateGatewayIOTSchema, organization_id: int = None):
     payload_data = payload.dict()
     user = getattr(request, "user", None)
@@ -283,7 +368,12 @@ def check_gateway_access(request, gateway_id: int):
 # Middleware to validate JWT tokens will be implemented separately.
 
 router = Router()
-@router.post("/token/", tags=["Authentication"])
+@router.post(
+    "/token/",
+    tags=["Authentication"],
+    summary="Obtain JWT access and refresh tokens",
+    description="Example request: POST /api/core/token/?username=middts&password=middts",
+)
 def obtain_token(request, username: str, password: str):
     user = authenticate(username=username, password=password)
     if user is not None:
@@ -294,7 +384,12 @@ def obtain_token(request, username: str, password: str):
         }
     return JsonResponse({"detail": "Invalid credentials"}, status=401)
 
-@router.post("/token/refresh/", tags=["Authentication"])
+@router.post(
+    "/token/refresh/",
+    tags=["Authentication"],
+    summary="Refresh JWT access token",
+    description="Example request: POST /api/core/token/refresh/?refresh=<refresh_token>",
+)
 def refresh_token(request, refresh: str):
     try:
         refresh_token = RefreshToken(refresh)

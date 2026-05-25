@@ -8,11 +8,23 @@ from facade.api import router as facade_router
 from orchestrator.api import router as orchestrator_router
 from ninja import NinjaAPI, Redoc
 from django.contrib.staticfiles.urls import staticfiles_urlpatterns
+from django.views.generic.base import RedirectView
 
 import os
 
 # api = NinjaAPI(docs=Redoc())
-api = NinjaAPI()
+# Expor esquema de segurança OpenAPI para permitir 'Authorize' (Bearer JWT)
+api = NinjaAPI(openapi_extra={
+    "components": {
+        "securitySchemes": {
+            "bearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT"
+            }
+        }
+    }
+})
 
 # Adicione as rotas dos apps 'orchestrator' e 'facade' à instância principal
 api.add_router("/core", core_router)
@@ -29,5 +41,7 @@ urlpatterns += [
     path('', index, name='index'),
     path('admin/', admin.site.urls),
     path('api/', api.urls),
+    # Support clients requesting the YAML form by redirecting to JSON
+    path('api/openapi.yaml', RedirectView.as_view(url='/api/openapi.json', permanent=False)),
 ]
 urlpatterns += staticfiles_urlpatterns()

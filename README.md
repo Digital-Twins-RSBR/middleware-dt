@@ -243,147 +243,210 @@ Dispositivos com bateria limitada: 300-600 segundos
 
 
 
-# Como configurar e executar com Docker Compose
+# Tutorial da Versão Demo com `make`
 
-Este repositório (middleware-dt) e o `iot_simulator` sobem juntos pelo compose unificado.
+O fluxo recomendado da demo usa apenas os alvos do `Makefile`. Ele sobe o stack completo, aplica as migrações, expõe a documentação Swagger e carrega o cenário `House 2.0` no middleware.
 
 ## 1. Pré-requisitos
 
-- Docker instalado
-- Docker Compose v2 (`docker compose`)
+- Docker
+- Docker Compose v2 com o comando `docker compose`
+- `make`
 
-Se estiver em WSL e o usuário não estiver no grupo `docker`, rode com `sudo`.
+Se estiver em WSL e seu usuário ainda não tiver acesso ao socket do Docker, rode os comandos com `sudo`.
 
-## 2. Criar e revisar o `.env`
+## 2. Preparar o ambiente
+
+Crie o arquivo `.env` a partir do template:
 
 ```bash
 cp .env.example .env
 ```
 
-Se quiser rodar em um comando so, sem criar `.env` manualmente:
+Defaults úteis da demo em `.env.example`:
+
+- Middleware: `http://localhost:8000`
+- Simulator: `http://localhost:8001`
+- Django admin / JWT: `middts` / `middts123`
+- PostgreSQL: `middts` / `middts`
+- Neo4j: `neo4j` / `middts123`
+- InfluxDB token: `middts_token`
+- ThingsBoard alvo padrão: `demo.thingsboard.io`
+
+Se você for usar outro ThingsBoard, ajuste as variáveis `MIDDLEWARE_THINGSBOARD_HOST`, `MIDDLEWARE_TB_HOST`, `MIDDLEWARE_TB_PORT`, `MIDDLEWARE_TB_SCHEME`, `THINGSBOARD_USER` e `THINGSBOARD_PASSWORD` antes da subida.
+
+## 3. Subir a demo
+
+Build do ambiente:
 
 ```bash
-[ -f .env ] || cp .env.example .env; docker compose up -d --build
+make build
 ```
 
-Com simulador:
+Subida dos serviços:
 
 ```bash
-[ -f .env ] || cp .env.example .env; docker compose --profile simulator up -d --build
+make up
 ```
 
-Variáveis principais (já com defaults úteis no `.env.example`):
+O target `make up` sobe também o profile `simulator` por padrão.
 
-- Portas:
-  - `MIDDLEWARE_PORT=8000`
-  - `SIMULATOR_PORT=8001`
-  - `DB_HOST_PORT=5432` (em WSL pode ser necessário `5433` se `5432` já estiver em uso)
-- ThingsBoard:
-  - `THINGSBOARD_USER`
-  - `THINGSBOARD_PASSWORD`
-  - `MIDDLEWARE_THINGSBOARD_HOST`
-  - `MIDDLEWARE_TB_HOST`
-  - `MIDDLEWARE_TB_PORT`
-  - `MIDDLEWARE_TB_SCHEME`
-  - `SIMULATOR_THINGSBOARD_HOST`
-- Internal parser microservice:
-  - `DTDL_PARSER_URL` default: `http://parser:8080/api/DTDLModels/parse/`
-
-Defaults de inicializacao automatica (primeira subida):
-
-- PostgreSQL: cria usuario `postgres` e banco `middts`.
-- Neo4j: cria autenticacao `neo4j/password`.
-- InfluxDB: cria usuario `middts`, organizacao `middts`, bucket `iot_data` e token admin.
-
-Esses valores podem ser alterados no `.env` antes da subida.
-
-## 3. Subir os serviços
-
-Por padrão, o compose sobe apenas o stack principal (sem o simulador).
-
-Sem `sudo`:
+## 4. Verificar saúde do ambiente
 
 ```bash
-docker compose up -d --build
+make healthcheck
 ```
 
-Com `sudo` (caso necessário no WSL):
+O healthcheck valida:
+
+- middleware
+- simulator
+- parser DTDL
+- InfluxDB
+- Neo4j
+- PostgreSQL
+- Redis
+
+## 5. Carregar o cenário demo
+
+Para carregar o cenário `House 2.0` no middleware:
 
 ```bash
-sudo docker compose up -d --build
+make seed-house
 ```
 
-Para subir tambem o simulador (profile `simulator`):
+Esse comando cria o contexto de sistema e os modelos DTDL usados na demo.
+
+Se você já tiver um gateway IoT configurado no banco e quiser carregar o cenário e disparar a descoberta de devices em seguida:
 
 ```bash
-docker compose --profile simulator up -d --build
+make seed-house-devices
 ```
 
-ou, no WSL com `sudo`:
+Se quiser apenas redescobrir dispositivos dos gateways já cadastrados:
 
 ```bash
-sudo docker compose --profile simulator up -d --build
+make discover-devices
 ```
 
-## 4. Verificar status
+Observação: `discover-devices` depende de pelo menos um `GatewayIOT` cadastrado. O caminho suportado hoje para isso é o Django admin em `/admin`.
 
-```bash
-docker compose ps
-```
+## 6. Acessar a aplicação
 
-ou
+Endpoints principais da demo:
 
-```bash
-sudo docker compose ps
-```
-
-## 5. Endpoints úteis
-
-- Middleware (Nginx): `http://localhost:8000`
-- Simulator HTTP: `http://localhost:8001`
-- InfluxDB: `http://localhost:8086`
-- Neo4j Browser: `http://localhost:7474`
+- Middleware: `http://localhost:8000`
+- Swagger / OpenAPI: `http://localhost:8000/api/docs`
+- Schema OpenAPI JSON: `http://localhost:8000/api/openapi.json`
+- Django admin: `http://localhost:8000/admin`
+- Simulator: `http://localhost:8001`
 - Parser Swagger: `http://localhost:8082/swagger/index.html`
+- Neo4j Browser: `http://localhost:7474`
+- InfluxDB: `http://localhost:8086`
 
-Observação: `http://localhost:8082/` pode retornar `404` e isso é esperado para essa API.
+Credenciais padrão do admin e da autenticação JWT:
 
-## 6. Logs
-
-```bash
-docker compose logs -f middleware parser
+```text
+usuario: middts
+senha: middts123
 ```
 
-Com simulador ativo:
+## 7. Obter um token JWT
+
+Exemplo com `curl`:
 
 ```bash
-docker compose logs -f middleware simulator parser
+curl -X POST "http://localhost:8000/api/core/token/?username=middts&password=middts123"
 ```
 
-## 7. Parar ambiente
+O retorno contém `access` e `refresh`. Use o `access` como Bearer token nos endpoints protegidos.
+
+Exemplo para listar os sistemas pelo token:
 
 ```bash
-docker compose down
+TOKEN="<cole-o-access-token-aqui>"
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8000/api/orchestrator/systems/
 ```
 
-## 8. Troubleshooting rápido
+## 8. Fluxo mínimo da demo
 
-- Erro de porta do Postgres (`address already in use` em `5432`):
-  - ajuste `DB_HOST_PORT=5433` no `.env` e suba novamente.
-- Erro de permissão no socket Docker:
-  - use `sudo` nos comandos, ou adicione o usuário no grupo `docker`.
-- Mudei variáveis no `.env` e não refletiu nos serviços de banco:
-  - as configuracoes de inicializacao de Postgres/Neo4j/Influx so sao aplicadas na primeira criacao dos volumes.
-  - para reconfigurar do zero, rode `docker compose down -v` e suba novamente.
+Depois de `make up`, `make healthcheck` e `make seed-house`, o fluxo mínimo para validar a demo é:
 
-## 9. Resumo de arquitetura local
+1. Entrar em `http://localhost:8000/api/docs`.
+2. Gerar um JWT em `POST /api/core/token/`.
+3. Consultar `GET /api/orchestrator/systems/`.
+4. Criar ou listar modelos DTDL em `/api/orchestrator/systems/{system_id}/dtdlmodels/`.
+5. Criar instâncias em `/api/orchestrator/systems/{system_id}/instances/`.
+6. Se houver gateway configurado, rodar `make discover-devices` e usar os endpoints do módulo `facade`.
 
-- `middleware`: Django + Gunicorn (projeto principal)
-- `simulator`: worker de telemetria + servidor HTTP auxiliar
-- `db`: PostgreSQL (middleware)
-- `redis`: cache/sessões URLLC
+## 9. Comandos operacionais úteis
+
+Logs contínuos:
+
+```bash
+make logs
+```
+
+Reiniciar middleware e nginx:
+
+```bash
+make restart
+```
+
+Abrir shell no container do middleware:
+
+```bash
+make shell
+```
+
+Aplicar migrações manualmente:
+
+```bash
+make migrate
+```
+
+Reexecutar coleta de estáticos:
+
+```bash
+make collectstatic
+```
+
+Parar os serviços:
+
+```bash
+make down
+```
+
+Limpar containers, redes e volumes do compose:
+
+```bash
+make clean
+```
+
+Reset completo do ambiente local:
+
+```bash
+make fullclean
+```
+
+## 10. Troubleshooting rápido
+
+- Se `make healthcheck` falhar no Postgres por porta ocupada, ajuste `DB_HOST_PORT` no `.env`.
+- Se mudanças no `.env` não refletirem em serviços com volume persistente, rode `make clean` e depois suba novamente.
+- Se `discover-devices` não encontrar nada, confirme primeiro no `/admin` se existe um `GatewayIOT` válido.
+- O arquivo `middts.sql` é um dump histórico e não faz parte do fluxo atual da demo baseada em migrações e `make`.
+
+## 11. Stack local
+
+- `middleware`: Django + Gunicorn
+- `nginx`: proxy reverso e exposição HTTP
+- `simulator`: simulador IoT
+- `db`: PostgreSQL
+- `redis`: cache/sessões
 - `neo4j`: grafo
-- `influxdb`: série temporal
-- `parser`: API de parser DTDL
+- `influxdb`: séries temporais
+- `parser`: parser DTDL
 
 ---
 

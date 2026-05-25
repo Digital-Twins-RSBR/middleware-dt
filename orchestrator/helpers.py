@@ -7,6 +7,7 @@ from typing import List
 from django.db import transaction
 import csv
 import io
+from functools import lru_cache
 
 from core.models import Organization
 from facade.models import Property
@@ -74,6 +75,7 @@ def _filter_candidate_device_properties(queryset, payload):
     return queryset
 
 
+@lru_cache(maxsize=1)
 def _load_sentence_model():
     return SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -307,8 +309,7 @@ def compute_similarity(text_a: str, text_b: str, model_name: str = None):
     Falls back to lexical Jaccard if model is unavailable or encoding fails.
     """
     try:
-        from sentence_transformers import SentenceTransformer, util
-        model = SentenceTransformer(model_name or "all-MiniLM-L6-v2")
+        model = _load_sentence_model() if model_name is None else SentenceTransformer(model_name)
         emb_a = model.encode(text_a or "", convert_to_tensor=True)
         emb_b = model.encode(text_b or "", convert_to_tensor=True)
         return float(util.cos_sim(emb_a, emb_b)[0][0])

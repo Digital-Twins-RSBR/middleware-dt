@@ -92,6 +92,16 @@ def list_devices(request):
 )
 def call_device_rpc(request, device_id: int, payload: DeviceRPCView):
     import uuid
+
+    def _parse_gateway_response(resp):
+        try:
+            return resp.json()
+        except ValueError:
+            body = (resp.text or "").strip()
+            if not body:
+                return None
+            return {"detail": body}
+
     user = getattr(request, "user", None)
     if not user or not getattr(user, "is_authenticated", False):
         return api.create_response(request, {"detail": "Authentication required"}, status=403)
@@ -114,9 +124,14 @@ def call_device_rpc(request, device_id: int, payload: DeviceRPCView):
     )
     # Atribuir request_id ao device para uso posterior (ex: gravação sent_timestamp)
     setattr(device, 'request_id', request_id)
+    response_payload = _parse_gateway_response(response)
     if response.status_code == 200:
-        return response.json()
-    return api.create_response(request, response.json(), status=response.status_code)
+        if response_payload is not None:
+            return response_payload
+        return {"status": "accepted", "request_id": request_id}
+    if response_payload is None:
+        response_payload = {"detail": response.reason or "Gateway RPC request failed"}
+    return api.create_response(request, response_payload, status=response.status_code)
 
 
 @router.get(
@@ -355,3 +370,7 @@ def list_device_rpc_methods(request, device_id: int):
     rpc_methods = device.property_set.filter(rpc_read_method__isnull=False).values_list('name', 'rpc_read_method', 'rpc_write_method')
     return list(rpc_methods)
 
+
+
+
+ 
