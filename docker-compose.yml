@@ -241,7 +241,7 @@ services:
       CORS_ALLOWED_ORIGINS: ${CLIENT_CORS_ALLOWED_ORIGINS:-http://localhost:8000,https://localhost:8000,http://127.0.0.1:8000,https://127.0.0.1:8000,http://${HOST_IP:-10.22.1.247}:8000,https://${HOST_IP:-10.22.1.247}:8000,http://localhost:8002,https://localhost:8002,http://127.0.0.1:8002,https://127.0.0.1:8002,http://${HOST_IP:-10.22.1.247}:8002,https://${HOST_IP:-10.22.1.247}:8002}
       SQLITE_DB_PATH: /app/data/db.sqlite3
     command: >-
-      sh -c "python manage.py migrate || true; python manage.py ensure_middts_user || true; python manage.py ensure_superuser || true; gunicorn --bind 0.0.0.0:8002 --workers $${CLIENT_GUNICORN_WORKERS:-2} --timeout $${CLIENT_GUNICORN_TIMEOUT:-120} client.wsgi:application"
+      sh -c "python manage.py migrate || true; python manage.py ensure_middts_user || true; python manage.py ensure_superuser || true; python manage.py collectstatic --noinput || true; gunicorn --bind 0.0.0.0:8002 --workers $${CLIENT_GUNICORN_WORKERS:-2} --timeout $${CLIENT_GUNICORN_TIMEOUT:-120} client.wsgi:application"
     ports:
       - "${CLIENT_PORT:-8002}:8002"
     restart: unless-stopped
