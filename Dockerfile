@@ -22,6 +22,8 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
 COPY requirements/ requirements/
+# CACHEBUST invalidates pip layer when explicitly passed: --build-arg CACHEBUST=$(date +%s)
+ARG CACHEBUST=1
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip setuptools wheel && \
     pip install -r requirements/base.txt
