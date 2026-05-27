@@ -87,6 +87,18 @@ Esta arquitetura modular permite fácil manutenção e expansão futura.
 
 Você pode usar o middleware de duas formas principais e complementar com os guias de suporte abaixo.
 
+### Fluxo rápido (primeira execução)
+
+Se você quer apenas subir o ambiente completo local pela primeira vez, siga esta sequência:
+
+1. `cp .env.example .env`
+2. `make build-with-deps`
+3. `make up`
+4. `make healthcheck`
+5. `make seed-house`
+
+Se algum contexto de build estiver faltando (`iot_simulator` ou `middts-client`), o `make` vai avisar com instruções de correção.
+
 ### <a id="execucao-docker-make"></a>Execução com Docker e Make
 
 Fluxo recomendado para subir a stack completa com Docker Compose e `make`.

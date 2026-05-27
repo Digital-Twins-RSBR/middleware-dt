@@ -4,6 +4,18 @@ Este guia descreve o fluxo recomendado para subir a demo do middleware com o `Ma
 
 [Voltar para a documentação principal](../README.md#execucao-docker-make)
 
+## Fluxo rápido (primeira execução)
+
+```bash
+cp .env.example .env
+make build-with-deps
+make up
+make healthcheck
+make seed-house
+```
+
+Esse caminho cobre bootstrap de dependências (quando houver submodules), build e subida da stack completa.
+
 ## 1. Pré-requisitos
 
 - Docker
@@ -11,6 +23,32 @@ Este guia descreve o fluxo recomendado para subir a demo do middleware com o `Ma
 - `make`
 
 Se estiver em WSL e seu usuário ainda não tiver acesso ao socket do Docker, rode os comandos com `sudo`.
+
+Opcional (quando `iot_simulator` e `middts-client` estiverem como submodules):
+
+```bash
+make deps
+```
+
+Ou faça tudo em um comando:
+
+```bash
+make build-with-deps
+```
+
+Se o simulador estiver em uma pasta irma (por exemplo `../iot_simulator`) em vez de `./iot_simulator`, o `Makefile` tenta detectar isso automaticamente. Se necessario, voce pode sobrescrever manualmente:
+
+```bash
+make SIMULATOR_CONTEXT=../iot_simulator build
+```
+
+Da mesma forma para o client:
+
+```bash
+make CLIENT_CONTEXT=../middts-client build
+```
+
+Se você não usa submodule, mantenha as pastas locais disponíveis em `./iot_simulator` e `./middts-client` (ou use os overrides de contexto).
 
 ## 2. Preparar o ambiente
 
@@ -148,3 +186,4 @@ O retorno contém `access` e `refresh`. Use o `access` como Bearer token nos end
 - Se mudanças no `.env` não refletirem em serviços com volume persistente, rode `make clean` e depois suba novamente.
 - Se `discover-devices` não encontrar nada, confirme primeiro no `/admin` se existe um `GatewayIOT` válido.
 - O arquivo `middts.sql` é um dump histórico e não faz parte do fluxo atual da demo baseada em migrações e `make`.
+- Se `make build` falhar por contexto ausente do simulador/client, rode `make deps` (quando usar submodules) ou informe os caminhos com `SIMULATOR_CONTEXT` e `CLIENT_CONTEXT`.

@@ -206,7 +206,7 @@ services:
     profiles: ["client"]
     # Note: `make build` and `make up` include this profile by default.
     build:
-      context: ./middts-client
+      context: ${CLIENT_CONTEXT:-./middts-client}
       dockerfile: Dockerfile
     container_name: middts_client
     depends_on:
