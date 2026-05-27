@@ -16,6 +16,8 @@ make seed-house
 
 Esse caminho cobre bootstrap de dependências (quando houver submodules), build e subida da stack completa.
 
+Se `iot_simulator` e `middts-client` nao existirem na raiz do projeto, `make build-with-deps` tenta criar as pastas automaticamente com `git clone`.
+
 ## 1. Pré-requisitos
 
 - Docker
@@ -24,13 +26,20 @@ Esse caminho cobre bootstrap de dependências (quando houver submodules), build 
 
 Se estiver em WSL e seu usuário ainda não tiver acesso ao socket do Docker, rode os comandos com `sudo`.
 
-Opcional (quando `iot_simulator` e `middts-client` estiverem como submodules):
+Bootstrap de dependencias:
 
 ```bash
 make deps
 ```
 
-Ou faça tudo em um comando:
+Com submodules, esse comando executa `git submodule update --init --recursive`.
+
+Sem submodules, ele tenta clonar automaticamente:
+
+- `https://github.com/Digital-Twins-RSBR/iot_simulator.git`
+- `https://github.com/Digital-Twins-RSBR/middts-client.git`
+
+Ou faca tudo em um comando:
 
 ```bash
 make build-with-deps
@@ -48,7 +57,7 @@ Da mesma forma para o client:
 make CLIENT_CONTEXT=../middts-client build
 ```
 
-Se você não usa submodule, mantenha as pastas locais disponíveis em `./iot_simulator` e `./middts-client` (ou use os overrides de contexto).
+Se voce nao usa submodule, o fluxo recomendado e deixar `make deps` ou `make build-with-deps` criar essas pastas automaticamente. Se preferir, voce ainda pode usar os overrides de contexto.
 
 ## 2. Preparar o ambiente
 
@@ -186,4 +195,4 @@ O retorno contém `access` e `refresh`. Use o `access` como Bearer token nos end
 - Se mudanças no `.env` não refletirem em serviços com volume persistente, rode `make clean` e depois suba novamente.
 - Se `discover-devices` não encontrar nada, confirme primeiro no `/admin` se existe um `GatewayIOT` válido.
 - O arquivo `middts.sql` é um dump histórico e não faz parte do fluxo atual da demo baseada em migrações e `make`.
-- Se `make build` falhar por contexto ausente do simulador/client, rode `make deps` (quando usar submodules) ou informe os caminhos com `SIMULATOR_CONTEXT` e `CLIENT_CONTEXT`.
+- Se `make build` falhar por contexto ausente do simulador/client, rode `make deps` ou `make build-with-deps`. Se os repositorios estiverem em outro local, informe os caminhos com `SIMULATOR_CONTEXT` e `CLIENT_CONTEXT`.

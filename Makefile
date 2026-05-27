@@ -1,4 +1,6 @@
 COMPOSE = docker compose -f docker-compose.yml
+SIMULATOR_REPO_URL ?= https://github.com/Digital-Twins-RSBR/iot_simulator.git
+CLIENT_REPO_URL ?= https://github.com/Digital-Twins-RSBR/middts-client.git
 SIMULATOR_CONTEXT ?= $(shell if [ -d ./iot_simulator ]; then echo ./iot_simulator; elif [ -d ../iot_simulator ]; then echo ../iot_simulator; else echo ""; fi)
 CLIENT_CONTEXT ?= $(shell if [ -d ./middts-client ]; then echo ./middts-client; elif [ -d ../middts-client ]; then echo ../middts-client; else echo ""; fi)
 COMPOSE_WITH_CONTEXT = SIMULATOR_CONTEXT="$(SIMULATOR_CONTEXT)" CLIENT_CONTEXT="$(CLIENT_CONTEXT)" $(COMPOSE)
@@ -19,8 +21,19 @@ deps:
 		git submodule sync --recursive; \
 		git submodule update --init --recursive; \
 	else \
-		echo "[deps] No .gitmodules found. Nothing to auto-download."; \
-		echo "[deps] Clone iot_simulator/middts-client manually or add them as submodules."; \
+		echo "[deps] No .gitmodules found. Bootstrapping dependency repositories with git clone..."; \
+		if [ ! -d ./iot_simulator ]; then \
+			echo "[deps] Cloning iot_simulator into ./iot_simulator"; \
+			git clone "$(SIMULATOR_REPO_URL)" ./iot_simulator; \
+		else \
+			echo "[deps] iot_simulator already present at ./iot_simulator"; \
+		fi; \
+		if [ ! -d ./middts-client ]; then \
+			echo "[deps] Cloning middts-client into ./middts-client"; \
+			git clone "$(CLIENT_REPO_URL)" ./middts-client; \
+		else \
+			echo "[deps] middts-client already present at ./middts-client"; \
+		fi; \
 	fi
 
 build-with-deps: deps build
