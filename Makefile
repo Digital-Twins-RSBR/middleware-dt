@@ -6,13 +6,13 @@ SIMULATOR_CONTEXT ?= $(shell if [ -d ./iot_simulator ]; then echo ./iot_simulato
 CLIENT_CONTEXT ?= $(shell if [ -d ./middts-client ]; then echo ./middts-client; elif [ -d ../middts-client ]; then echo ../middts-client; else echo ""; fi)
 COMPOSE_WITH_CONTEXT = SIMULATOR_CONTEXT="$(SIMULATOR_CONTEXT)" CLIENT_CONTEXT="$(CLIENT_CONTEXT)" $(COMPOSE)
 
-PHONY: help deps build-with-deps ensure-simulator-context ensure-client-context ensure-build-contexts build up down restart logs migrate collectstatic shell sim-up sim-down client-up client-down client-build update db-backup deploy clean fullclean seed-house discover-gateways discover-devices seed-house-devices
+PHONY: help deps build-with-deps ensure-simulator-context ensure-client-context ensure-build-contexts build up down restart logs migrate collectstatic shell sim-up sim-down client-up client-down client-build update db-backup deploy clean fullclean prune-safe prune-all seed-house discover-gateways discover-devices seed-house-devices
 
 help:
 	@echo "Usage: make <target>"
 	@echo "Main flow: make build && make up"
 	@echo "Bootstrap: deps build-with-deps"
-	@echo "Targets: deps build-with-deps build up down restart logs migrate collectstatic shell sim-up sim-down client-build client-up client-down update db-backup deploy clean fullclean seed-house discover-devices seed-house-devices"
+	@echo "Targets: deps build-with-deps build up down restart logs migrate collectstatic shell sim-up sim-down client-build client-up client-down update db-backup deploy clean fullclean prune-safe prune-all seed-house discover-devices seed-house-devices"
 	@if [ -n "$(SIMULATOR_CONTEXT)" ]; then echo "Simulator context auto-detected: $(SIMULATOR_CONTEXT)"; else echo "Simulator context not found (expected ./iot_simulator or ../iot_simulator)"; fi
 	@if [ -n "$(CLIENT_CONTEXT)" ]; then echo "Client context auto-detected: $(CLIENT_CONTEXT)"; else echo "Client context not found (expected ./middts-client or ../middts-client)"; fi
 
@@ -95,6 +95,7 @@ up: ensure-build-contexts
 	$(COMPOSE_WITH_CONTEXT) --profile simulator --profile client up -d
 
 down:
+	# Default down keeps named volumes (simulator/client DB data preserved)
 	$(COMPOSE) down
 
 clean:
@@ -108,6 +109,19 @@ fullclean:
 	@echo "FULL CLEAN: stopping compose, removing images and volumes. This is destructive."
 	$(COMPOSE) down --rmi all -v --remove-orphans || true
 	@echo "Running docker system prune -a --volumes (may free a lot of space)..."
+	docker system prune -a --volumes -f || true
+
+prune-safe:
+	# Reclaim disk space without removing named volumes (preserves DB data)
+	@echo "SAFE PRUNE: removing stopped containers, unused networks, dangling images and build cache."
+	docker container prune -f || true
+	docker network prune -f || true
+	docker image prune -f || true
+	docker builder prune -f || true
+
+prune-all:
+	# Destructive prune: includes unused volumes (can delete persisted DB data when stack is down)
+	@echo "PRUNE ALL: includes unused volumes and may remove persisted data."
 	docker system prune -a --volumes -f || true
 
 restart:

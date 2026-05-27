@@ -173,10 +173,16 @@ services:
     depends_on:
       influxdb:
         condition: service_healthy
+      middleware:
+        condition: service_healthy
     environment:
       DJANGO_SETTINGS_MODULE: iot_simulator.settings_base
       DEBUG: ${SIMULATOR_DEBUG:-False}
       ALLOWED_HOSTS: ${SIMULATOR_ALLOWED_HOSTS:-*}
+      SQLITE_DB_PATH: /data/db.sqlite3
+      SIMULATOR_SEED_DB_ON_FIRST_BOOT: ${SIMULATOR_SEED_DB_ON_FIRST_BOOT:-1}
+      SIMULATOR_RESTORE_DB_ON_BOOT: ${SIMULATOR_RESTORE_DB_ON_BOOT:-0}
+      RESET_SIM_DB: ${RESET_SIM_DB:-0}
       THINGSBOARD_HOST: ${SIMULATOR_THINGSBOARD_HOST:-https://demo.thingsboard.io}
       THINGSBOARD_USER: ${THINGSBOARD_USER:-tenant@thingsboard.org}
       THINGSBOARD_PASSWORD: ${THINGSBOARD_PASSWORD:-tenant}
@@ -195,6 +201,8 @@ services:
     ports:
       - "${SIMULATOR_PORT:-8001}:8001"
     restart: unless-stopped
+    volumes:
+      - simulator_data:/data
     networks:
       - middts_net
     healthcheck:
@@ -213,6 +221,8 @@ services:
     depends_on:
       nginx:
         condition: service_started
+      middleware:
+        condition: service_healthy
     environment:
       DJANGO_SETTINGS_MODULE: client.settings
       HOST_IP: ${HOST_IP:-10.22.1.247}
@@ -254,3 +264,4 @@ volumes:
   influxdb_data_root:
   neo4j_data:
   client_data:
+  simulator_data:
