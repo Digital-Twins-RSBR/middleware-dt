@@ -48,6 +48,10 @@ if codespace_name and codespaces_domain:
 
 CSRF_TRUSTED_ORIGINS = [o for o in os.getenv("CSRF_TRUSTED_ORIGINS", ",".join(default_csrf)).split(",") if o]
 
+# Honor reverse-proxy headers (nginx/codespaces forwarding).
+USE_X_FORWARDED_HOST = True
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
