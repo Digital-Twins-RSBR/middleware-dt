@@ -19,6 +19,8 @@ O objetivo principal é criar uma camada intermediária em Python para conectar 
 - **Neo4j (banco de dados orientado a grafos)**  
   Usado para representar gêmeos digitais (nós) e suas propriedades, além de conexões (arestas) entre gêmeos. Permite consultas complexas e análise de relacionamentos hierárquicos e causais.
 
+- **Influx (Banco de dados temporal)**
+  Usado para armazenar séries temporais, leituras de sensores e métricas históricas do middleware e dos dispositivos integrados.
 ---
 
 ## Arquitetura do Middleware
