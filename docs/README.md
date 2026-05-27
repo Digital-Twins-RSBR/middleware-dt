@@ -2,6 +2,8 @@
 
 Esta pasta contém os relatórios InfluxDB para análise de latência ODTE (One-Way Delay Time) bidirectional no sistema URLLC.
 
+[Voltar para a documentação principal](../README.md#relatorios-influxdb)
+
 ## 📋 Relatórios Disponíveis
 
 ### 1. **Análises por Direção**
