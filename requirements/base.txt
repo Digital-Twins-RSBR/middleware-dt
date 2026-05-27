@@ -24,7 +24,7 @@ urllib3==2.2.2
 websockets==12.0
 django-cors-headers==4.4.0
 neomodel==5.4.2
-gunicorn==20.1.0
+gunicorn==23.0.0
 
 # Force CPU-only PyTorch wheels to avoid pulling CUDA/NVIDIA packages
 # that bloat image size and may exhaust disk in constrained environments.
