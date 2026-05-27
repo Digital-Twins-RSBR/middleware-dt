@@ -30,7 +30,9 @@ Defaults úteis da demo em `.env.example`:
 - InfluxDB token: `middts_token`
 - ThingsBoard alvo padrão: `demo.thingsboard.io`
 
-Se você for usar outro ThingsBoard, ajuste as variáveis `MIDDLEWARE_THINGSBOARD_HOST`, `MIDDLEWARE_TB_HOST`, `MIDDLEWARE_TB_PORT`, `MIDDLEWARE_TB_SCHEME`, `THINGSBOARD_USER` e `THINGSBOARD_PASSWORD` antes da subida.
+No fluxo atual, não e obrigatorio ajustar variaveis de ThingsBoard no `.env` para subir a stack.
+
+As credenciais e o endpoint efetivo usados nas operacoes do middleware e do simulador sao definidos pelo `GatewayIOT` ativo cadastrado na aplicacao (admin/API). Assim, variaveis como `MIDDLEWARE_THINGSBOARD_HOST`, `MIDDLEWARE_TB_PORT` e `THINGSBOARD_PASSWORD` ficam opcionais e servem apenas para compatibilidade em etapas de bootstrap.
 
 ## 3. Subir a demo
 
