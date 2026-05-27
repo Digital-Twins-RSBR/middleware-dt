@@ -247,6 +247,7 @@ services:
     restart: unless-stopped
     volumes:
       - client_data:/app/data
+      - static_volume:/app/staticfiles
     networks:
       - middts_net
     healthcheck:
