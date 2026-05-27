@@ -18,35 +18,49 @@ if host_ip_env:
     DEFAULT_ALLOWED.append(host_ip_env)
 ALLOWED_HOSTS = [h for h in os.getenv("ALLOWED_HOSTS", ",".join(DEFAULT_ALLOWED)).split(",") if h]
 
-# CSRF trusted origins must include scheme; build sensible defaults including
-# the detected host IP and configured `MIDDLEWARE_PORT` (overridable via env).
+# CSRF trusted origins must include scheme.
+# Source of truth is ALLOWED_HOSTS plus optional extra env entries.
 MIDDLEWARE_PORT = os.getenv("MIDDLEWARE_PORT", "8000")
-csrf_candidates = {
-    "localhost",
-    "127.0.0.1",
-}
-if host_ip_env:
-    csrf_candidates.add(host_ip_env)
-for host in ALLOWED_HOSTS:
-    h = host.strip()
-    if h and h != "*":
-        csrf_candidates.add(h)
 
 default_csrf = []
-for host in sorted(csrf_candidates):
-    default_csrf.append(f"http://{host}")
-    default_csrf.append(f"https://{host}")
-    default_csrf.append(f"http://{host}:{MIDDLEWARE_PORT}")
-    default_csrf.append(f"https://{host}:{MIDDLEWARE_PORT}")
 
-# Codespaces/GitHub forwarded domains (when available in env)
+def _add_csrf_for_host(host):
+    h = host.strip()
+    if not h or h == "*":
+        return
+    default_csrf.append(f"http://{h}")
+    default_csrf.append(f"https://{h}")
+    default_csrf.append(f"http://{h}:{MIDDLEWARE_PORT}")
+    default_csrf.append(f"https://{h}:{MIDDLEWARE_PORT}")
+
+# Always include local defaults.
+_add_csrf_for_host("localhost")
+_add_csrf_for_host("127.0.0.1")
+
+# If HOST_IP is explicitly configured, replicate to CSRF automatically.
+if host_ip_env:
+    _add_csrf_for_host(host_ip_env)
+
+# Replicate explicit ALLOWED_HOSTS entries to CSRF.
+for host in ALLOWED_HOSTS:
+    _add_csrf_for_host(host)
+
+# Codespaces/GitHub forwarded domains (dynamic when env vars are available).
 codespace_name = os.getenv("CODESPACE_NAME", "").strip()
-codespaces_domain = os.getenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "").strip()
-if codespace_name and codespaces_domain:
+codespaces_domain = os.getenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "").strip() or "app.github.dev"
+if codespace_name:
     default_csrf.append(f"https://{codespace_name}-{MIDDLEWARE_PORT}.{codespaces_domain}")
     default_csrf.append(f"https://{codespace_name}-8000.{codespaces_domain}")
 
-CSRF_TRUSTED_ORIGINS = [o for o in os.getenv("CSRF_TRUSTED_ORIGINS", ",".join(default_csrf)).split(",") if o]
+# In dev, ALLOWED_HOSTS='*' is common; include safe wildcard patterns for
+# forwarded domains so onboarding does not require manual CSRF edits.
+if DEBUG and "*" in [h.strip() for h in ALLOWED_HOSTS]:
+    default_csrf.append("https://*.app.github.dev")
+    default_csrf.append("https://*.github.dev")
+
+# Optional extra trusted origins from env are merged (not replacing defaults).
+env_csrf = [o.strip() for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+CSRF_TRUSTED_ORIGINS = list(dict.fromkeys(default_csrf + env_csrf))
 
 # Honor reverse-proxy headers (nginx/codespaces forwarding).
 USE_X_FORWARDED_HOST = True
