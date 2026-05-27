@@ -1,10 +1,11 @@
 COMPOSE = docker compose -f docker-compose.yml
 
-PHONY: help build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean seed-house discover-gateways discover-devices seed-house-devices
+PHONY: help build up down restart logs migrate collectstatic shell sim-up sim-down client-up client-down client-build update db-backup deploy clean fullclean seed-house discover-gateways discover-devices seed-house-devices
 
 help:
 	@echo "Usage: make <target>"
-	@echo "Targets: build up down restart logs migrate collectstatic shell sim-up sim-down update db-backup deploy clean fullclean seed-house discover-devices seed-house-devices"
+	@echo "Main flow: make build && make up"
+	@echo "Targets: build up down restart logs migrate collectstatic shell sim-up sim-down client-build client-up client-down update db-backup deploy clean fullclean seed-house discover-devices seed-house-devices"
 
 # Dispara a descoberta de dispositivos para todos os gateways via API REST.
 # Passe ARGS para enviar opções adicionais ao comando (ex: ARGS=\"--gateway-ids=1,2 --dry-run\").
@@ -19,13 +20,12 @@ seed-house-devices:
 	$(MAKE) discover-devices ARGS="$(ARGS)"
 
 build:
-	# Build all services including the simulator profile by default
-	$(COMPOSE) --profile simulator build --pull --no-cache
+	# Principal build target: middleware + simulator + client
+	$(COMPOSE) --profile simulator --profile client build --pull --no-cache
 
 up:
-	# Bring up all services including simulator by default. To avoid starting simulator,
-	# run `$(COMPOSE) up -d` without the profile or use the `sim-down` target.
-	$(COMPOSE) --profile simulator up -d
+	# Principal startup target for the full solution (middleware + simulator + client)
+	$(COMPOSE) --profile simulator --profile client up -d
 
 down:
 	$(COMPOSE) down
@@ -62,12 +62,23 @@ sim-up:
 	$(COMPOSE) --profile simulator up -d
 
 sim-down:
-	$(COMPOSE) --profile simulator down
+	$(COMPOSE) stop simulator || true
+	$(COMPOSE) rm -f simulator || true
+
+client-build:
+	$(COMPOSE) --profile client build client
+
+client-up:
+	$(COMPOSE) --profile client up -d client
+
+client-down:
+	$(COMPOSE) stop client || true
+	$(COMPOSE) rm -f client || true
 
 update:
 	@git pull --ff-only || true
 	$(COMPOSE) pull
-	$(COMPOSE) up -d --remove-orphans --build middleware nginx
+	$(COMPOSE) --profile simulator --profile client up -d --remove-orphans --build
 	$(MAKE) migrate
 	$(MAKE) collectstatic
 
@@ -92,6 +103,7 @@ healthcheck:
 	@echo "Checking HTTP endpoints..."
 	@curl -fsS --max-time 5 http://localhost:8000/ >/dev/null && echo "middleware: OK" || echo "middleware: FAIL"
 	@curl -fsS --max-time 5 http://localhost:8001/ >/dev/null && echo "simulator: OK" || echo "simulator: FAIL"
+	@curl -fsS --max-time 5 http://localhost:8002/ >/dev/null && echo "client: OK" || echo "client: OFF/FAIL"
 	@curl -fsS --max-time 5 http://localhost:8082/swagger/index.html >/dev/null && echo "parser: OK" || echo "parser: FAIL"
 	@curl -fsS --max-time 5 http://localhost:8086/health >/dev/null && echo "influxdb: OK" || echo "influxdb: FAIL"
 	@curl -fsS --max-time 5 http://localhost:7474/ >/dev/null && echo "neo4j: OK" || echo "neo4j: FAIL"

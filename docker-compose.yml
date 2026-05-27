@@ -164,8 +164,9 @@ services:
 
   simulator:
     profiles: ["simulator"]
+    # Note: `make build` and `make up` include this profile by default.
     build:
-      context: ../iot_simulator
+      context: ${SIMULATOR_CONTEXT:-./iot_simulator}
       dockerfile: Dockerfile
     container_name: iot_simulator
     depends_on:
@@ -201,6 +202,46 @@ services:
       timeout: 5s
       retries: 6
 
+  client:
+    profiles: ["client"]
+    # Note: `make build` and `make up` include this profile by default.
+    build:
+      context: ./middts-client
+      dockerfile: Dockerfile
+    container_name: middts_client
+    depends_on:
+      nginx:
+        condition: service_started
+    environment:
+      DJANGO_SETTINGS_MODULE: client.settings
+      HOST_IP: ${HOST_IP:-10.22.1.247}
+      DEBUG: ${CLIENT_DEBUG:-True}
+      ALLOWED_HOSTS: ${CLIENT_ALLOWED_HOSTS:-localhost,127.0.0.1,0.0.0.0,client,${HOST_IP:-10.22.1.247}}
+      SITE_URL: ${CLIENT_SITE_URL:-http://${HOST_IP:-10.22.1.247}:8002}
+      MIDDTS_API_URL: ${CLIENT_MIDDTS_API_URL:-http://nginx/api}
+      MIDDTS_API_USERNAME: ${MIDDTS_API_USERNAME:-middts}
+      MIDDTS_API_PASSWORD: ${MIDDTS_API_PASSWORD:-middts123}
+      MIDDTS_API_TIMEOUT: ${MIDDTS_API_TIMEOUT:-10}
+      DJANGO_SUPERUSER_USERNAME: ${DJANGO_SUPERUSER_USERNAME:-middts}
+      DJANGO_SUPERUSER_PASSWORD: ${DJANGO_SUPERUSER_PASSWORD:-middts123}
+      DJANGO_SUPERUSER_EMAIL: ${DJANGO_SUPERUSER_EMAIL:-admin@example.com}
+      CORS_ALLOWED_ORIGINS: ${CLIENT_CORS_ALLOWED_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000,http://${HOST_IP:-10.22.1.247}:8000,http://localhost:8002,http://127.0.0.1:8002,http://${HOST_IP:-10.22.1.247}:8002}
+      SQLITE_DB_PATH: /app/data/db.sqlite3
+    command: >-
+      sh -c "python manage.py migrate && python manage.py ensure_middts_user || true && python manage.py ensure_superuser || true && python manage.py runserver 0.0.0.0:8002"
+    ports:
+      - "${CLIENT_PORT:-8002}:8002"
+    restart: unless-stopped
+    volumes:
+      - client_data:/app/data
+    networks:
+      - middts_net
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://localhost:8002/', timeout=5)"]
+      interval: 20s
+      timeout: 10s
+      retries: 6
+
 networks:
   middts_net:
     driver: bridge
@@ -211,3 +252,4 @@ volumes:
   influxdb_data:
   influxdb_data_root:
   neo4j_data:
+  client_data:

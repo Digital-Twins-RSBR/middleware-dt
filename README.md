@@ -245,7 +245,11 @@ Dispositivos com bateria limitada: 300-600 segundos
 
 # Tutorial da Versão Demo com `make`
 
-O fluxo recomendado da demo usa apenas os alvos do `Makefile`. Ele sobe o stack completo, aplica as migrações, expõe a documentação Swagger e carrega o cenário `House 2.0` no middleware.
+O fluxo recomendado da demo usa apenas os alvos do `Makefile`. O `Makefile` é o arquivo principal de subida da solução: ele sobe o stack completo (middleware + simulator + client), aplica as migrações, expõe a documentação Swagger e carrega o cenário `House 2.0` no middleware.
+
+O client web está incluído no fluxo principal de build/subida (`make build` e `make up`) e fica disponível em `http://localhost:8002`. Os alvos `make client-build` e `make client-up` continuam disponíveis para operações isoladas do client.
+
+O simulador agora fica em `middleware-dt/iot_simulator`, no mesmo padrão do client. O compose usa esse caminho por padrão e ainda aceita `SIMULATOR_CONTEXT` caso você queira sobrescrever o contexto de build.
 
 ## 1. Pré-requisitos
 
@@ -289,7 +293,7 @@ Subida dos serviços:
 make up
 ```
 
-O target `make up` sobe também o profile `simulator` por padrão.
+O target `make up` sobe os profiles `simulator` e `client` por padrão.
 
 ## 4. Verificar saúde do ambiente
 
@@ -301,6 +305,7 @@ O healthcheck valida:
 
 - middleware
 - simulator
+- client
 - parser DTDL
 - InfluxDB
 - Neo4j
@@ -340,6 +345,7 @@ Endpoints principais da demo:
 - Schema OpenAPI JSON: `http://localhost:8000/api/openapi.json`
 - Django admin: `http://localhost:8000/admin`
 - Simulator: `http://localhost:8001`
+- Client: `http://localhost:8002`
 - Parser Swagger: `http://localhost:8082/swagger/index.html`
 - Neo4j Browser: `http://localhost:7474`
 - InfluxDB: `http://localhost:8086`
@@ -442,6 +448,7 @@ make fullclean
 - `middleware`: Django + Gunicorn
 - `nginx`: proxy reverso e exposição HTTP
 - `simulator`: simulador IoT
+- `client`: interface web de consumo do MiddTS
 - `db`: PostgreSQL
 - `redis`: cache/sessões
 - `neo4j`: grafo
