@@ -168,9 +168,9 @@ seed-house:
 # Simple healthcheck for main services
 healthcheck:
 	@echo "Checking HTTP endpoints..."
-	@curl -fsS --max-time 5 http://localhost:8000/ >/dev/null && echo "middleware: OK" || echo "middleware: FAIL"
+	@curl -fsS --retry 2 --retry-delay 1 --retry-connrefused --max-time 10 http://localhost:8000/ >/dev/null && echo "middleware: OK" || echo "middleware: FAIL"
 	@curl -fsS --max-time 5 http://localhost:8001/ >/dev/null && echo "simulator: OK" || echo "simulator: FAIL"
-	@curl -fsS --max-time 5 http://localhost:8002/ >/dev/null && echo "client: OK" || echo "client: OFF/FAIL"
+	@curl -fsS --retry 2 --retry-delay 1 --retry-connrefused --max-time 10 http://localhost:8002/ >/dev/null && echo "client: OK" || echo "client: OFF/FAIL"
 	@curl -fsS --max-time 5 http://localhost:8082/swagger/index.html >/dev/null && echo "parser: OK" || echo "parser: FAIL"
 	@curl -fsS --max-time 5 http://localhost:8086/health >/dev/null && echo "influxdb: OK" || echo "influxdb: FAIL"
 	@curl -fsS --max-time 5 http://localhost:7474/ >/dev/null && echo "neo4j: OK" || echo "neo4j: FAIL"

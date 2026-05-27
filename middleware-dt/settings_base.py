@@ -8,31 +8,14 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 
 DEBUG = os.getenv("DEBUG", "True").lower() in ("1", "true", "yes", "on")
-import socket
 
-
-# sensible defaults for local/testing environments; can be overridden via .env
-# Prefer explicit `ALLOWED_HOSTS` from env. If not set, try to discover a useful
-# host IP to include so remote test machines can access the site without editing
-# code. You can also provide `HOST_IP` in the .env to force the value.
-def _detect_host_ip():
-    ip = os.getenv("HOST_IP")
-    if ip:
-        return ip
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        try:
-            return socket.gethostbyname(socket.gethostname())
-        except Exception:
-            return "127.0.0.1"
-
-_detected_ip = _detect_host_ip()
-DEFAULT_ALLOWED = ["localhost", "127.0.0.1", _detected_ip]
+# Sensible defaults for local/testing environments; can be overridden via .env.
+# Keep defaults restricted to localhost/loopback and only add HOST_IP when
+# explicitly provided.
+host_ip_env = os.getenv("HOST_IP", "").strip()
+DEFAULT_ALLOWED = ["localhost", "127.0.0.1"]
+if host_ip_env:
+    DEFAULT_ALLOWED.append(host_ip_env)
 ALLOWED_HOSTS = [h for h in os.getenv("ALLOWED_HOSTS", ",".join(DEFAULT_ALLOWED)).split(",") if h]
 
 # CSRF trusted origins must include scheme; build sensible defaults including
@@ -41,8 +24,9 @@ MIDDLEWARE_PORT = os.getenv("MIDDLEWARE_PORT", "8000")
 csrf_candidates = {
     "localhost",
     "127.0.0.1",
-    _detected_ip,
 }
+if host_ip_env:
+    csrf_candidates.add(host_ip_env)
 for host in ALLOWED_HOSTS:
     h = host.strip()
     if h and h != "*":
@@ -51,7 +35,16 @@ for host in ALLOWED_HOSTS:
 default_csrf = []
 for host in sorted(csrf_candidates):
     default_csrf.append(f"http://{host}")
+    default_csrf.append(f"https://{host}")
     default_csrf.append(f"http://{host}:{MIDDLEWARE_PORT}")
+    default_csrf.append(f"https://{host}:{MIDDLEWARE_PORT}")
+
+# Codespaces/GitHub forwarded domains (when available in env)
+codespace_name = os.getenv("CODESPACE_NAME", "").strip()
+codespaces_domain = os.getenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "").strip()
+if codespace_name and codespaces_domain:
+    default_csrf.append(f"https://{codespace_name}-{MIDDLEWARE_PORT}.{codespaces_domain}")
+    default_csrf.append(f"https://{codespace_name}-8000.{codespaces_domain}")
 
 CSRF_TRUSTED_ORIGINS = [o for o in os.getenv("CSRF_TRUSTED_ORIGINS", ",".join(default_csrf)).split(",") if o]
 
