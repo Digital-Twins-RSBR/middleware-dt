@@ -38,6 +38,16 @@ class CreateDTFromDTDLModelSchema(Schema):
     dtdl_model_id : int
 
 
+class CreateDTFromDevicesSchema(Schema):
+    dry_run: bool = False
+
+
+class CreateDTFromDevicesResponseSchema(Schema):
+    status: str
+    dry_run: bool
+    output: str
+
+
 class DigitalTwinPropertySchema(ModelSchema):
     name: str
     causal: bool
@@ -216,6 +226,39 @@ class AutoBindingApplyResponseSchema(Schema):
     applied: int
     skipped: int
     details: List[AutoBindingCandidateSchema]
+
+
+class RelationshipSuggestionRequestSchema(Schema):
+    threshold: float = 0.5
+    only_missing: bool = True
+    limit: int = 200
+
+
+class RelationshipSuggestionCandidateSchema(Schema):
+    relationship_model_id: int
+    relationship_name: str
+    source_instance_id: int
+    source_instance_name: str
+    source_model_name: str
+    target_instance_id: int
+    target_instance_name: str
+    target_model_name: str
+    score: float
+
+
+class RelationshipSuggestionPreviewResponseSchema(Schema):
+    system_id: int
+    threshold: float
+    candidates: List[RelationshipSuggestionCandidateSchema]
+
+
+class RelationshipSuggestionApplyResponseSchema(Schema):
+    system_id: int
+    threshold: float
+    evaluated: int
+    created: int
+    skipped: int
+    details: List[RelationshipSuggestionCandidateSchema]
 
 
 class InfluxTemporalQuerySchema(Schema):

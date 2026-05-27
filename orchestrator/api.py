@@ -2,6 +2,8 @@ from django.shortcuts import get_object_or_404
 import neo4j
 import neo4j.exceptions
 from pydantic import ValidationError
+from io import StringIO
+from django.core.management import call_command
 from core.models import Organization, OrganizationMembership
 
 from facade.models import Property
@@ -14,6 +16,10 @@ from orchestrator.schemas import (
     AutoBindingPreviewResponseSchema,
     AssociatedPropertySchema,
     BindDTInstancePropertieDeviceSchema,
+    RelationshipSuggestionRequestSchema,
+    RelationshipSuggestionCandidateSchema,
+    RelationshipSuggestionPreviewResponseSchema,
+    RelationshipSuggestionApplyResponseSchema,
     CreateDTFromDTDLModelSchema,
     CypherQuerySchema,
     DTDLModelBatchSchema,
@@ -22,6 +28,8 @@ from orchestrator.schemas import (
     DigitalTwinInstancePropertySchema,
     DigitalTwinInstanceRelationshipModelSchema,
     DigitalTwinInstanceRelationshipSchema,
+    CreateDTFromDevicesSchema,
+    CreateDTFromDevicesResponseSchema,
     DigitalTwinPropertyUpdateSchema,
     InfluxTemporalQueryResponseSchema,
     InfluxTemporalQuerySchema,
@@ -80,6 +88,7 @@ from .helpers import (
     _extract_identifier_tokens,
     _compute_hybrid_match_score,
     _suggest_autobinding_candidates,
+    _suggest_instance_relationship_candidates,
     _parse_influx_csv_points,
     compute_similarity,
 )
@@ -502,6 +511,54 @@ def create_dtinstance(request, system_id: int, payload: CreateDTFromDTDLModelSch
 
 
 @router.post(
+    "/systems/{system_id}/instances/from-devices/",
+    response=CreateDTFromDevicesResponseSchema,
+    tags=["Orchestrator"],
+    summary="Create Digital Twin instances from existing devices",
+    description="Runs the device-based DT generation logic and builds instance relationships automatically.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "default": {
+                            "value": {
+                                "dry_run": False
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
+def create_instances_from_devices(request, system_id: int, payload: CreateDTFromDevicesSchema):
+    user = getattr(request, "user", None)
+    if not user or not getattr(user, "is_authenticated", False):
+        raise HttpError(403, "Authentication required")
+
+    _get_scoped_system_or_404(request, system_id)
+
+    output_buffer = StringIO()
+    try:
+        call_command(
+            "generate_digitaltwins_from_devices",
+            system_id=system_id,
+            dry_run=payload.dry_run,
+            stdout=output_buffer,
+            stderr=output_buffer,
+        )
+    except Exception as e:
+        raise HttpError(500, f"Error generating DTs from devices: {e}")
+
+    return CreateDTFromDevicesResponseSchema(
+        status="success",
+        dry_run=payload.dry_run,
+        output=output_buffer.getvalue(),
+    )
+
+
+@router.post(
     "/systems/{system_id}/instances/batch/",
     tags=["Orchestrator"],
     openapi_extra={
@@ -839,6 +896,121 @@ def create_relationships(
         raise HttpError(404, f"SystemContext with ID {system_id} not found.")
     except Exception as e:
         raise HttpError(400, str(e))
+
+
+@router.post(
+    "/systems/{system_id}/instances/relationships/preview/",
+    response=RelationshipSuggestionPreviewResponseSchema,
+    tags=["Orchestrator"],
+    summary="Preview inferred digital twin instance relationships",
+    description="Suggest relationships between DT instances based on DTDL model relationships and existing instance data.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "default": {
+                            "value": {
+                                "threshold": 0.5,
+                                "only_missing": True,
+                                "limit": 150
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
+def preview_relationship_suggestions(
+    request,
+    system_id: int,
+    payload: RelationshipSuggestionRequestSchema,
+):
+    system_context = _get_scoped_system_or_404(request, system_id)
+    candidates = _suggest_instance_relationship_candidates(system_context, payload)
+    return RelationshipSuggestionPreviewResponseSchema(
+        system_id=system_context.id,
+        threshold=float(payload.threshold),
+        candidates=candidates,
+    )
+
+
+@router.post(
+    "/systems/{system_id}/instances/relationships/apply/",
+    response=RelationshipSuggestionApplyResponseSchema,
+    tags=["Orchestrator"],
+    summary="Create inferred digital twin instance relationships",
+    description="Creates DT instance relationships suggested from DTDL model structure and existing twin data.",
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "default": {
+                            "value": {
+                                "threshold": 0.5,
+                                "only_missing": True,
+                                "limit": 150
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+)
+def apply_relationship_suggestions(
+    request,
+    system_id: int,
+    payload: RelationshipSuggestionRequestSchema,
+):
+    system_context = _get_scoped_system_or_404(request, system_id)
+    candidates = _suggest_instance_relationship_candidates(system_context, payload)
+
+    evaluated = len(candidates)
+    created = 0
+    skipped = 0
+    applied_details = []
+
+    for candidate in candidates:
+        source_instance = DigitalTwinInstance.objects.filter(
+            id=candidate["source_instance_id"],
+            model__system=system_context,
+        ).first()
+        target_instance = DigitalTwinInstance.objects.filter(
+            id=candidate["target_instance_id"],
+            model__system=system_context,
+        ).first()
+        relationship = ModelRelationship.objects.filter(
+            id=candidate["relationship_model_id"],
+            dtdl_model__system=system_context,
+        ).first()
+
+        if not source_instance or not target_instance or not relationship:
+            skipped += 1
+            continue
+
+        instance_relationship, created_flag = DigitalTwinInstanceRelationship.objects.update_or_create(
+            source_instance=source_instance,
+            target_instance=target_instance,
+            relationship=relationship,
+        )
+
+        if created_flag:
+            created += 1
+            applied_details.append(candidate)
+        else:
+            skipped += 1
+
+    return RelationshipSuggestionApplyResponseSchema(
+        system_id=system_context.id,
+        threshold=float(payload.threshold),
+        evaluated=evaluated,
+        created=created,
+        skipped=skipped,
+        details=applied_details,
+    )
 
 
 @router.delete(

@@ -290,7 +290,8 @@ def create_full_topology(system: SystemContext | None, dry_run=False):
             created.append((m.name, 'DRY'))
             mapping[m.id] = None
             continue
-        inst = DigitalTwinInstance.objects.create(model=m)
+        # Create instances with empty names; they will be properly named/linked when devices are processed.
+        inst = DigitalTwinInstance.objects.create(model=m, name='')
         mapping[m.id] = inst
     # Create relationships between instances according to ModelRelationship
     if not dry_run:
@@ -341,20 +342,27 @@ class Command(BaseCommand):
         model_by_id, adjacency, incoming = build_model_graph(system)
         root_model = find_root_model(system)
         self.stdout.write(self.style.NOTICE(f"Root model chosen: {root_model.name if root_model else 'N/A'}"))
-        # If there are no DigitalTwinInstance entries, create a full topology from the models
+        # If there are no DigitalTwinInstance entries, we previously created a full
+        # topology from the models. That produced placeholder instances with empty
+        # names which later remained unassociated when devices were present. To
+        # avoid orphan placeholders, only generate the full topology when there
+        # are no devices to drive instance creation.
         any_instances = DigitalTwinInstance.objects.exists()
         instance_mapping = {}
         if not any_instances:
-            self.stdout.write(self.style.NOTICE("No existing DigitalTwinInstance found — generating full topology from DTDL models."))
-            mapping, created_list = create_full_topology(system, dry_run=dry_run)
-            # mapping keys are model ids -> DigitalTwinInstance (or None in dry-run)
-            instance_mapping = {}
-            for model_pk, inst in mapping.items():
-                m = DTDLModel.objects.filter(pk=model_pk).first()
-                if m:
-                    instance_mapping[m] = inst
-            if dry_run:
-                self.stdout.write(self.style.NOTICE(f"[DRY] Would create topology: {created_list}"))
+            if devices.exists():
+                self.stdout.write(self.style.NOTICE("Devices present — skipping full topology pre-creation to avoid placeholder instances."))
+            else:
+                self.stdout.write(self.style.NOTICE("No existing DigitalTwinInstance found and no devices — generating full topology from DTDL models."))
+                mapping, created_list = create_full_topology(system, dry_run=dry_run)
+                # mapping keys are model ids -> DigitalTwinInstance (or None in dry-run)
+                instance_mapping = {}
+                for model_pk, inst in mapping.items():
+                    m = DTDLModel.objects.filter(pk=model_pk).first()
+                    if m:
+                        instance_mapping[m] = inst
+                if dry_run:
+                    self.stdout.write(self.style.NOTICE(f"[DRY] Would create topology: {created_list}"))
         for group_key, dlist in groups.items():
             self.stdout.write(self.style.NOTICE(f"Processing group {group_key} ({len(dlist)} devices)"))
             for d in dlist:
@@ -367,6 +375,8 @@ class Command(BaseCommand):
 
                 parent_instance = None
                 created_list = []
+                # Attempt to extract hierarchical tokens from device name, e.g. 'House 1 - Room 2 - LightBulb'
+                name_tokens = [t.strip() for t in re.split(r"\s*-\s*", d.name)] if d.name else []
                 for idx, mid in enumerate(path):
                     mdl = model_by_id.get(mid)
                     if not mdl:
@@ -388,18 +398,50 @@ class Command(BaseCommand):
                     else:
                         # Intermediate nodes are shared within the group hierarchy.
                         existing = DigitalTwinInstance.objects.filter(model=mdl)
+                        desired_token = name_tokens[idx] if len(name_tokens) > idx else None
                         for ex in existing:
-                            if group_key and group_key.lower() in " ".join(ex.get_hierarchy()).lower():
-                                inst = ex
-                                break
+                            try:
+                                hierarchy_text = " ".join(ex.get_hierarchy()).lower()
+                            except Exception:
+                                hierarchy_text = (ex.name or '').lower()
+                            # If we have a desired token for this level, only accept an
+                            # existing instance that matches that token. Otherwise fall
+                            # back to group_key match.
+                            if desired_token:
+                                if desired_token.lower() in hierarchy_text:
+                                    inst = ex
+                                    break
+                            else:
+                                if group_key and group_key.lower() in hierarchy_text:
+                                    inst = ex
+                                    break
 
                     if not inst:
                         if dry_run:
-                            preview_name = d.name if is_leaf else f"{mdl.name} {group_key}"
+                            if is_leaf:
+                                # preview uses device name if it already contains group_key
+                                if d.name and group_key and group_key.lower() in d.name.lower():
+                                    preview_name = d.name
+                                else:
+                                    preview_name = f"{group_key} - {d.name}" if group_key else d.name
+                            else:
+                                # try to use the token for this level from device name when available
+                                token = name_tokens[idx] if len(name_tokens) > idx else mdl.name
+                                preview_name = f"{group_key} - {token}" if group_key else token
                             created_list.append((mdl.name, preview_name))
                             inst = None
                         else:
-                            instance_name = d.name if is_leaf else f"{mdl.name} {group_key}"
+                            # For leaf instances prefer the device's full name when it already
+                            # encodes the hierarchy (avoids collisions between rooms).
+                            if is_leaf:
+                                if d.name and group_key and group_key.lower() in d.name.lower():
+                                    instance_name = d.name
+                                else:
+                                    instance_name = f"{group_key} - {d.name}" if group_key else d.name
+                            else:
+                                # Use device tokens to generate more specific intermediate names
+                                token = name_tokens[idx] if len(name_tokens) > idx else mdl.name
+                                instance_name = f"{group_key} - {token}" if group_key else token
                             inst = DigitalTwinInstance.objects.create(model=mdl, name=instance_name)
                             created_list.append((mdl.name, inst.name))
 
@@ -444,7 +486,41 @@ class Command(BaseCommand):
                                 if score > best_score:
                                     best_score = score
                                     best = e
-                            if best and best_score >= float(os.environ.get('ASSOC_SIM_THRESHOLD', 0.7)):
+                            threshold = float(os.environ.get('ASSOC_SIM_THRESHOLD', 0.7))
+                            # Accept match either by similarity OR by token/substring overlap
+                            def norm(s):
+                                return normalize_name(s or '')
+                            accepted = False
+                            if best and best_score >= threshold:
+                                accepted = True
+                            else:
+                                # token / substring fallback: humidity <-> soilHumidity
+                                prop_norm = norm(prop.name)
+                                if best:
+                                    best_norm = norm(best.name)
+                                    # substring match in either direction
+                                    if prop_norm and (prop_norm in best_norm or best_norm in prop_norm):
+                                        accepted = True
+                                    else:
+                                        # token overlap (split on non-word)
+                                        prop_tokens = set([t for t in re.split(r"\W+", prop_norm) if t])
+                                        best_tokens = set([t for t in re.split(r"\W+", best_norm) if t])
+                                        if prop_tokens & best_tokens:
+                                            # accept if some token overlaps and score is reasonably close
+                                            if best_score >= 0.45:
+                                                accepted = True
+
+                                # If best candidate didn't match, try scanning all elements for substring/token overlap
+                                if not accepted:
+                                    for e in elems_qs:
+                                        e_norm = norm(e.name)
+                                        if prop_norm and (prop_norm in e_norm or e_norm in prop_norm):
+                                            # accept this element as the match
+                                            best = e
+                                            accepted = True
+                                            break
+
+                            if accepted and best:
                                 el = best
                             else:
                                 print(f"[WARN] No ModelElement found for property '{prop.name}' in model '{instance.model.name if instance and instance.model else 'N/A'}' - skipping binding.")

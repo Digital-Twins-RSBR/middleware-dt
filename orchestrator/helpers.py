@@ -3,8 +3,9 @@ from ninja.errors import HttpError
 from sentence_transformers import SentenceTransformer, util
 from django.utils.text import slugify
 from orchestrator.utils import normalize_name
-from typing import List
+from typing import Any, List, Optional
 from django.db import transaction
+from django.db.models import Q
 import csv
 import io
 from functools import lru_cache
@@ -125,6 +126,36 @@ def _build_device_property_canonical(prop: Property):
     device_name = prop.device.name if prop and prop.device else ""
     prop_name = prop.name if prop else ""
     return _to_canonical_slug(f"{device_name} {prop_name}".strip())
+
+
+def _build_dt_instance_text(instance: DigitalTwinInstance):
+    hierarchy = instance.get_hierarchy() if hasattr(instance, "get_hierarchy") else []
+    model_name = normalize_name(instance.model.name if instance.model else "")
+    instance_name = normalize_name(instance.name or "")
+
+    bound_property_texts = []
+    bound_properties = DigitalTwinInstanceProperty.objects.filter(
+        dtinstance=instance,
+        device_property__isnull=False,
+    ).select_related("device_property", "device_property__device", "device_property__device__type")
+
+    for prop in bound_properties:
+        if prop.device_property:
+            bound_property_texts.append(normalize_name(prop.device_property.name or ""))
+            if prop.device_property.device:
+                bound_property_texts.append(normalize_name(prop.device_property.device.name or ""))
+                bound_property_texts.append(normalize_name(prop.device_property.device.metadata or ""))
+                bound_property_texts.append(normalize_name(prop.device_property.device.type.name if prop.device_property.device.type else ""))
+
+    parts = [instance_name, model_name, " ".join(hierarchy), " ".join(bound_property_texts)]
+    return " ".join([p for p in parts if p]).strip()
+
+
+def _build_relationship_query_text(source_instance: DigitalTwinInstance, relationship: ModelRelationship):
+    return " ".join([
+        normalize_name(relationship.name or ""),
+        _build_dt_instance_text(source_instance),
+    ]).strip()
 
 
 def _tokenize_for_matching(text: str):
@@ -287,6 +318,117 @@ def _suggest_autobinding_candidates(system_context: SystemContext, payload):
         if not allow_reuse:
             used_device_property_ids.add(device_property_id)
         if len(selected) >= max_results:
+            break
+
+    return selected
+
+
+def _resolve_target_models_for_relationship(rel: ModelRelationship, system_context: SystemContext):
+    target_models = DTDLModel.objects.filter(
+        system=system_context,
+    ).filter(
+        Q(dtdl_id__icontains=rel.target) | Q(name__icontains=rel.target)
+    )
+    if target_models.exists():
+        return list(target_models)
+
+    # fallback by tokenized name fragments
+    tokens = [tok for tok in normalize_name(rel.target).split() if tok]
+    if tokens:
+        queryset = DTDLModel.objects.filter(system=system_context)
+        for token in tokens:
+            queryset = queryset.filter(name__icontains=token)
+        return list(queryset.distinct())
+    return []
+
+
+def _suggest_instance_relationship_candidates(system_context: SystemContext, payload):
+    threshold = float(getattr(payload, 'threshold', 0.5))
+    if threshold < 0.0 or threshold > 1.0:
+        raise HttpError(400, "threshold must be between 0.0 and 1.0")
+
+    only_missing = bool(getattr(payload, 'only_missing', True))
+    limit = max(0, int(getattr(payload, 'limit', 200)))
+
+    sentence_model = _load_sentence_model()
+    candidates = []
+
+    model_relationships = ModelRelationship.objects.filter(dtdl_model__system=system_context)
+    if not model_relationships.exists():
+        return []
+
+    for rel in model_relationships.select_related('dtdl_model'):
+        source_instances = list(DigitalTwinInstance.objects.filter(model=rel.dtdl_model).select_related('model'))
+        if not source_instances:
+            continue
+
+        target_models = _resolve_target_models_for_relationship(rel, system_context)
+        if not target_models:
+            continue
+
+        target_instances = list(DigitalTwinInstance.objects.filter(model__in=target_models).select_related('model'))
+        if not target_instances:
+            continue
+
+        target_texts = [_build_dt_instance_text(instance) for instance in target_instances]
+        if not any(target_texts):
+            continue
+
+        target_embeddings = sentence_model.encode(target_texts, convert_to_tensor=True)
+
+        for source_instance in source_instances:
+            source_text = _build_relationship_query_text(source_instance, rel)
+            if not source_text:
+                continue
+            source_embedding = sentence_model.encode(source_text, convert_to_tensor=True)
+            scores = util.cos_sim(source_embedding, target_embeddings)[0]
+
+            for idx, raw_score in enumerate(scores):
+                score = float(raw_score)
+                if score < threshold:
+                    continue
+
+                target_instance = target_instances[idx]
+                if only_missing and DigitalTwinInstanceRelationship.objects.filter(
+                    source_instance=source_instance,
+                    target_instance=target_instance,
+                    relationship=rel,
+                ).exists():
+                    continue
+
+                candidates.append(
+                    (
+                        score,
+                        source_instance.id,
+                        target_instance.id,
+                        rel.id,
+                        {
+                            "relationship_model_id": rel.id,
+                            "relationship_name": rel.name,
+                            "source_instance_id": source_instance.id,
+                            "source_instance_name": source_instance.name,
+                            "source_model_name": source_instance.model.name if source_instance.model else None,
+                            "target_instance_id": target_instance.id,
+                            "target_instance_name": target_instance.name,
+                            "target_model_name": target_instance.model.name if target_instance.model else None,
+                            "score": round(score, 4),
+                        },
+                    )
+                )
+
+    if not candidates:
+        return []
+
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    selected = []
+    seen = set()
+    for _, source_id, target_id, rel_id, data in candidates:
+        key = (source_id, target_id, rel_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(data)
+        if len(selected) >= limit:
             break
 
     return selected
