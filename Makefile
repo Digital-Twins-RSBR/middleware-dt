@@ -1,6 +1,7 @@
 COMPOSE = docker compose -f docker-compose.yml
 SIMULATOR_REPO_URL ?= https://github.com/Digital-Twins-RSBR/iot_simulator.git
 CLIENT_REPO_URL ?= https://github.com/Digital-Twins-RSBR/middts-client.git
+PUBLIC_GIT_CLONE = env GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 git clone
 SIMULATOR_CONTEXT ?= $(shell if [ -d ./iot_simulator ]; then echo ./iot_simulator; elif [ -d ../iot_simulator ]; then echo ../iot_simulator; else echo ""; fi)
 CLIENT_CONTEXT ?= $(shell if [ -d ./middts-client ]; then echo ./middts-client; elif [ -d ../middts-client ]; then echo ../middts-client; else echo ""; fi)
 COMPOSE_WITH_CONTEXT = SIMULATOR_CONTEXT="$(SIMULATOR_CONTEXT)" CLIENT_CONTEXT="$(CLIENT_CONTEXT)" $(COMPOSE)
@@ -24,13 +25,22 @@ deps:
 		echo "[deps] No .gitmodules found. Bootstrapping dependency repositories with git clone..."; \
 		if [ ! -d ./iot_simulator ]; then \
 			echo "[deps] Cloning iot_simulator into ./iot_simulator"; \
-			git clone "$(SIMULATOR_REPO_URL)" ./iot_simulator; \
+			$(PUBLIC_GIT_CLONE) "$(SIMULATOR_REPO_URL)" ./iot_simulator || { \
+				echo "[deps][ERROR] Failed to clone iot_simulator from $(SIMULATOR_REPO_URL)"; \
+				echo "[deps][ERROR] Check network access or clone manually into ./iot_simulator"; \
+				exit 1; \
+			}; \
 		else \
 			echo "[deps] iot_simulator already present at ./iot_simulator"; \
 		fi; \
 		if [ ! -d ./middts-client ]; then \
 			echo "[deps] Cloning middts-client into ./middts-client"; \
-			git clone "$(CLIENT_REPO_URL)" ./middts-client; \
+			$(PUBLIC_GIT_CLONE) "$(CLIENT_REPO_URL)" ./middts-client || { \
+				echo "[deps][ERROR] Failed to clone middts-client from $(CLIENT_REPO_URL)"; \
+				echo "[deps][ERROR] This can happen when the environment injects Git credentials/config automatically."; \
+				echo "[deps][ERROR] Try cloning manually or set CLIENT_CONTEXT to an existing local path."; \
+				exit 1; \
+			}; \
 		else \
 			echo "[deps] middts-client already present at ./middts-client"; \
 		fi; \

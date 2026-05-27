@@ -39,6 +39,8 @@ Sem submodules, ele tenta clonar automaticamente:
 - `https://github.com/Digital-Twins-RSBR/iot_simulator.git`
 - `https://github.com/Digital-Twins-RSBR/middts-client.git`
 
+O bootstrap tenta fazer clone anonimo. Se o seu ambiente injetar configuracoes/credenciais Git e ainda assim o clone falhar, faca o clone manualmente ou aponte `SIMULATOR_CONTEXT` e `CLIENT_CONTEXT` para pastas locais existentes.
+
 Ou faca tudo em um comando:
 
 ```bash
