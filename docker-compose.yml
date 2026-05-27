@@ -229,7 +229,8 @@ services:
       DJANGO_SETTINGS_MODULE: client.settings
       HOST_IP: ${HOST_IP:-10.22.1.247}
       DEBUG: ${CLIENT_DEBUG:-True}
-      STATIC_URL: ${CLIENT_STATIC_URL:-http://localhost:8000/static/}
+      # Allow the app to derive STATIC_URL from SITE_URL/HOST_IP when CLIENT_STATIC_URL is not set
+      STATIC_URL: ${CLIENT_STATIC_URL:-}
       ALLOWED_HOSTS: ${CLIENT_ALLOWED_HOSTS:-localhost,127.0.0.1,0.0.0.0,client,${HOST_IP:-10.22.1.247}}
       SITE_URL: ${CLIENT_SITE_URL:-http://${HOST_IP:-10.22.1.247}:8002}
       MIDDTS_API_URL: ${CLIENT_MIDDTS_API_URL:-http://middleware:8000/api}
