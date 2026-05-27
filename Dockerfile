@@ -55,9 +55,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 COPY --from=builder /opt/venv /opt/venv
 COPY . .
+COPY entrypoint.sh /entrypoint.sh
 
 # Criar link simbolico para o modulo Python funcionar corretamente
-RUN ln -s /middleware-dt/middleware-dt /middleware-dt/middleware_dt && \
+RUN ln -sfn /middleware-dt/middleware-dt /middleware-dt/middleware_dt && \
     chmod +x /entrypoint.sh
 
 EXPOSE 8000
