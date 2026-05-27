@@ -6,13 +6,13 @@ SIMULATOR_CONTEXT ?= $(shell if [ -d ./iot_simulator ]; then echo ./iot_simulato
 CLIENT_CONTEXT ?= $(shell if [ -d ./middts-client ]; then echo ./middts-client; elif [ -d ../middts-client ]; then echo ../middts-client; else echo ""; fi)
 COMPOSE_WITH_CONTEXT = SIMULATOR_CONTEXT="$(SIMULATOR_CONTEXT)" CLIENT_CONTEXT="$(CLIENT_CONTEXT)" $(COMPOSE)
 
-PHONY: help deps build-with-deps ensure-simulator-context ensure-client-context ensure-build-contexts build build-nocache up down restart logs migrate collectstatic shell sim-up sim-down client-up client-down client-build update db-backup deploy clean fullclean prune-safe prune-all space-report seed-house discover-gateways discover-devices seed-house-devices
+PHONY: help deps build-with-deps ensure-simulator-context ensure-client-context ensure-build-contexts build build-refresh build-nocache up down restart logs migrate collectstatic shell sim-up sim-down client-up client-down client-build update db-backup deploy clean fullclean prune-safe prune-all space-report seed-house discover-gateways discover-devices seed-house-devices
 
 help:
 	@echo "Usage: make <target>"
 	@echo "Main flow: make build && make up"
 	@echo "Bootstrap: deps build-with-deps"
-	@echo "Targets: deps build-with-deps build build-nocache up down restart logs migrate collectstatic shell sim-up sim-down client-build client-up client-down update db-backup deploy clean fullclean prune-safe prune-all space-report seed-house discover-devices seed-house-devices"
+	@echo "Targets: deps build-with-deps build build-refresh build-nocache up down restart logs migrate collectstatic shell sim-up sim-down client-build client-up client-down update db-backup deploy clean fullclean prune-safe prune-all space-report seed-house discover-devices seed-house-devices"
 	@if [ -n "$(SIMULATOR_CONTEXT)" ]; then echo "Simulator context auto-detected: $(SIMULATOR_CONTEXT)"; else echo "Simulator context not found (expected ./iot_simulator or ../iot_simulator)"; fi
 	@if [ -n "$(CLIENT_CONTEXT)" ]; then echo "Client context auto-detected: $(CLIENT_CONTEXT)"; else echo "Client context not found (expected ./middts-client or ../middts-client)"; fi
 
@@ -87,12 +87,16 @@ seed-house-devices:
 	$(MAKE) discover-devices ARGS="$(ARGS)"
 
 build: ensure-build-contexts
-	# Principal build target: middleware + simulator + client (with cache)
+	# Principal build target: middleware + simulator + client (fast path with cache)
+	$(COMPOSE_WITH_CONTEXT) --profile simulator --profile client build
+
+build-refresh: ensure-build-contexts
+	# Rebuild checking newer base images (slower than default build)
 	$(COMPOSE_WITH_CONTEXT) --profile simulator --profile client build --pull
 
 build-nocache: ensure-build-contexts
 	# Full rebuild without cache (slower and uses more disk)
-	$(COMPOSE_WITH_CONTEXT) --profile simulator --profile client build --pull --no-cache
+	$(COMPOSE_WITH_CONTEXT) --profile simulator --profile client build --no-cache
 
 up: ensure-build-contexts
 	# Principal startup target for the full solution (middleware + simulator + client)
@@ -116,12 +120,12 @@ fullclean:
 	docker system prune -a --volumes -f || true
 
 prune-safe:
-	# Reclaim disk space without removing named volumes (preserves DB data)
-	@echo "SAFE PRUNE: removing stopped containers, unused networks/images and build cache."
+	# Reclaim disk space without removing named volumes and preserving useful build cache
+	@echo "SAFE PRUNE: removing stopped containers, unused networks and dangling artifacts."
 	docker container prune -f || true
 	docker network prune -f || true
-	docker image prune -af || true
-	docker builder prune -af || true
+	docker image prune -f || true
+	docker builder prune -f || true
 
 prune-all:
 	# Destructive prune: includes unused volumes (can delete persisted DB data when stack is down)
