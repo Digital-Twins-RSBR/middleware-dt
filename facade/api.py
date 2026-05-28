@@ -354,7 +354,17 @@ def discover_devices(request, gateway_id: int, params: DeviceDiscoveryParams = Q
         except Exception:
             pass
         return {"created": created_count, "updated": updated_count}
-    return api.create_response(request, response.json(), status=response.status_code)
+    # Some ThingsBoard cloud responses may be empty or non-JSON (HTML error pages).
+    # Avoid raising an internal server error when `.json()` fails — return a
+    # readable payload with the original status and body text instead.
+    try:
+        payload = response.json()
+    except Exception:
+        body = (response.text or "").strip()
+        if not body:
+            body = response.reason or "Gateway error"
+        payload = {"detail": body}
+    return api.create_response(request, payload, status=response.status_code)
 
 @router.get(
     "/devices/{device_id}/rpc-methods/",
