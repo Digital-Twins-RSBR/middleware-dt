@@ -64,6 +64,13 @@ else
 fi
 export SECRET_KEY
 
+# Activate virtualenv if present to ensure the container uses the copied venv
+if [ -f "/opt/venv/bin/activate" ]; then
+	# shellcheck disable=SC1091
+	. /opt/venv/bin/activate
+	echo "[entrypoint] Activated virtualenv /opt/venv"
+fi
+
 # Aguarda Postgres ficar acessível (multi-host fallback)
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 PRIMARY_HOST="${POSTGRES_HOST:-}"
