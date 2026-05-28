@@ -48,9 +48,8 @@ for host in ALLOWED_HOSTS:
 # Codespaces/GitHub forwarded domains (dynamic when env vars are available).
 codespace_name = os.getenv("CODESPACE_NAME", "").strip()
 codespaces_domain = os.getenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "").strip() or "app.github.dev"
-if codespace_name:
+if codespace_name and codespaces_domain:
     default_csrf.append(f"https://{codespace_name}-{MIDDLEWARE_PORT}.{codespaces_domain}")
-    default_csrf.append(f"https://{codespace_name}-8000.{codespaces_domain}")
 
 # In dev, ALLOWED_HOSTS='*' is common; include safe wildcard patterns for
 # forwarded domains so onboarding does not require manual CSRF edits.

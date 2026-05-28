@@ -144,4 +144,38 @@ O middleware conecta dispositivos físicos, gateway IoT, modelos DTDL e camadas 
 - `Core`: concentra a lógica central, autenticação, configurações e cadastros.
 - `Utils`: reúne utilitários compartilhados.
 
+## Codespaces, CSRF e ALLOWED_HOSTS (atualizações)
+
+Pequenas mudanças foram feitas para facilitar execução em ambientes GitHub Codespaces e similares:
+
+- Cada serviço (`middleware`, `client`, `iot_simulator`) agora deriva entradas seguras para `CSRF_TRUSTED_ORIGINS` a partir das variáveis de ambiente `CODESPACE_NAME` e `GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN` quando presentes. O formato gerado é:
+
+  `https://<CODESPACE_NAME>-<PORT>.<GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN>`
+
+  - `MIDDLEWARE_PORT` (padrão `8000`) é usado para o `middleware`.
+  - `CLIENT_PORT` (padrão `8002`) é usado para o `client`.
+  - `SIMULATOR_PORT` (padrão `8001`) é usado para o `iot_simulator`.
+
+- Cada serviço também inclui `localhost`, `127.0.0.1` e, quando definido, `HOST_IP` em `ALLOWED_HOSTS` e em `CSRF_TRUSTED_ORIGINS` (com e sem porta).
+
+- Para ativar no Codespace, adicione ao arquivo `.env` (ou exporte no ambiente):
+
+```env
+CODESPACE_NAME=your-codespace-name
+GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN=app.github.dev
+MIDDLEWARE_PORT=8000
+CLIENT_PORT=8002
+SIMULATOR_PORT=8001
+```
+
+- Reinicie os serviços afetados após alterar o `.env` (não é necessário rebuild):
+
+```bash
+docker compose up -d --no-deps --force-recreate middleware client simulator
+```
+
+- Se houver erros de CSRF após a troca de host, limpe os cookies do navegador para esses domínios e tente novamente.
+
+Essas mudanças são pontuais — podemos depois mover para um padrão por-service `.env` e documentação mais completa.
+
 
