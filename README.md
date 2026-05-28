@@ -174,6 +174,12 @@ SIMULATOR_PORT=8001
 docker compose up -d --no-deps --force-recreate middleware client simulator
 ```
 
+Nota: o arquivo `.env.example` já contém as chaves `CODESPACE_NAME` e
+`GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN` (vazias por padrão). Você pode
+copiá-lo para `.env` e preencher essas variáveis localmente ou adicionar as
+mesmas nas configurações do Codespace. Após alterar `.env`, reinicie os
+serviços como mostrado acima.
+
 - Se houver erros de CSRF após a troca de host, limpe os cookies do navegador para esses domínios e tente novamente.
 
 Essas mudanças são pontuais — podemos depois mover para um padrão por-service `.env` e documentação mais completa.
