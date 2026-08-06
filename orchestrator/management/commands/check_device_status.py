@@ -39,13 +39,15 @@ class Command(BaseCommand):
     def __init__(self):
         super().__init__()
         self.token_manager = JWTTokenManager()
+        # Reuse a requests.Session per gateway to benefit from connection pooling
+        self.sessions = {}  # gateway_id -> requests.Session()
 
     def add_arguments(self, parser):
         parser.add_argument(
             '--interval',
             type=int,
-            default=10,
-            help='Interval in seconds between status checks (default: 10)'
+            default=2,
+            help='Interval in seconds between status checks (default: 2)'
         )
         parser.add_argument(
             '--device-ids',
@@ -53,10 +55,18 @@ class Command(BaseCommand):
             type=int,
             help='List of Device IDs to monitor. If not provided, monitors all devices.'
         )
+        parser.add_argument(
+            '--concurrency',
+            type=int,
+            default=50,
+            help='Maximum concurrent device status checks (default: 50)'
+        )
 
     def handle(self, *args, **options):
         interval = options['interval']
         device_ids = options['device_ids']
+        # Store concurrency option on the instance for check_devices_status
+        self.concurrency = options.get('concurrency')
         loop = asyncio.get_event_loop()
         try:
             logger.info("Starting device status checker...")
@@ -80,6 +90,14 @@ class Command(BaseCommand):
         logger.error(f"Failed to get JWT token for gateway {gateway_id}, status code: {status_code}")
         return None
 
+    def _get_session(self, gateway_id):
+        """Return a requests.Session for the gateway, creating if missing."""
+        if gateway_id not in self.sessions:
+            s = requests.Session()
+            # Optionally tune session parameters here (retries, adapters, timeouts)
+            self.sessions[gateway_id] = s
+        return self.sessions[gateway_id]
+
     async def check_device_status(self, device):
         logger.info(f"Checking status for device {device.name} (ID: {device.id})")
         try:
@@ -98,9 +116,11 @@ class Command(BaseCommand):
                 "Content-Type": "application/json",
                 "X-Authorization": f"Bearer {jwt_token}"
             }
-            
+            # Use a session per gateway to reuse TCP connections and reduce latency
+            session = self._get_session(device.gateway_id)
+            request_timeout = 3
             try:
-                response = await sync_to_async(requests.get)(url, headers=headers)
+                response = await sync_to_async(session.get)(url, headers=headers, timeout=request_timeout)
             except requests.exceptions.ConnectionError:
                 logger.error(f"Connection error while checking status for device {device.name}")
                 await sync_to_async(write_inactivity_event)(
@@ -116,7 +136,7 @@ class Command(BaseCommand):
                 jwt_token = await self.get_jwt_token(device)
                 if jwt_token:
                     headers["X-Authorization"] = f"Bearer {jwt_token}"
-                    response = await sync_to_async(requests.get)(url, headers=headers)
+                    response = await sync_to_async(session.get)(url, headers=headers, timeout=request_timeout)
 
             if response.status_code == 200:
                 attributes = response.json()
@@ -177,7 +197,19 @@ class Command(BaseCommand):
                     devices = await sync_to_async(list)(Device.objects.all().select_related('gateway'))
 
                 logger.info(f"Found {len(devices)} devices to check")
-                tasks = [self.check_device_status(device) for device in devices]
+                # Concurrency control to avoid creating too many simultaneous requests
+                concurrency = getattr(self, 'concurrency', None)
+                # if CLI provided concurrency, it will be set on the Command instance by handle()
+                if concurrency is None:
+                    sem = asyncio.Semaphore(50)
+                else:
+                    sem = asyncio.Semaphore(int(concurrency))
+
+                async def _bounded_check(d):
+                    async with sem:
+                        return await self.check_device_status(d)
+
+                tasks = [ _bounded_check(device) for device in devices ]
                 await asyncio.gather(*tasks)
 
                 await asyncio.sleep(interval)

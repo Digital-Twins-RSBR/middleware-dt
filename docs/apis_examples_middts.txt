@@ -1,0 +1,114 @@
+MIDDTS API EXAMPLES
+Generated at: 2026-04-17
+Base URL: http://localhost:8000
+Authentication: Session (Django login) or JWT according to deployment flow.
+
+1) Discovery de dispositivos por gateway
+Endpoint: GET /api/facade/gatewaysiot/{gateway_id}/discover-devices/
+Example:
+curl -X GET "http://localhost:8000/api/facade/gatewaysiot/1/discover-devices/?pageSize=20&page=0" \
+  -H "Cookie: sessionid=<your_session_cookie>"
+
+2) Criacao hierarquica de instancias com threshold customizado
+Endpoint: POST /api/orchestrator/systems/{system_id}/instances/hierarchical/?similarity_threshold=0.60
+Example:
+curl -X POST "http://localhost:8000/api/orchestrator/systems/2/instances/hierarchical/?similarity_threshold=0.60" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: sessionid=<your_session_cookie>" \
+  -d '{
+    "House 1": {
+      "Room 1": {
+        "LightBulb 1": {},
+        "AirConditioner 1": {}
+      }
+    }
+  }'
+
+3) Autobinding - simulacao (nao persiste)
+Endpoint: POST /api/orchestrator/systems/{system_id}/instances/autobinding/preview/
+Example:
+curl -X POST "http://localhost:8000/api/orchestrator/systems/2/instances/autobinding/preview/" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: sessionid=<your_session_cookie>" \
+  -d '{
+    "threshold": 0.70,
+    "only_unbound": true,
+    "causal_only": true,
+    "allow_device_property_reuse": false,
+    "gateway_ids": [1],
+    "limit": 100
+  }'
+
+Expected response highlights:
+- system_id
+- threshold
+- candidates[] com dt_property_id, device_property_id e score
+- gateway_ids/device_ids podem ser usados para restringir o universo avaliado antes da consolidacao
+
+4) Autobinding - efetivacao (persiste)
+Endpoint: POST /api/orchestrator/systems/{system_id}/instances/autobinding/apply/
+Example:
+curl -X POST "http://localhost:8000/api/orchestrator/systems/2/instances/autobinding/apply/" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: sessionid=<your_session_cookie>" \
+  -d '{
+    "threshold": 0.70,
+    "only_unbound": true,
+    "causal_only": true,
+    "allow_device_property_reuse": false,
+    "overwrite_existing": false,
+    "gateway_ids": [1],
+    "limit": 100
+  }'
+
+Expected response highlights:
+- evaluated
+- applied
+- skipped
+- details[] com os binds aplicados
+- a efetivacao persiste apenas o vinculo; nao dispara RPC por si so
+
+5) Query de grafo Neo4j com escopo de sistema
+Endpoint: POST /api/orchestrator/systems/{system_id}/instances/query/
+Important:
+- O corpo da query deve usar o alias dt_filter para manter o escopo seguro.
+- O endpoint atual e intencionalmente restrito a um unico SystemContext dentro da organizacao autenticada.
+- Consultas entre sistemas continuam possiveis no Neo4j como tecnologia, mas devem entrar por outra API explicita, com governanca organizacional propria.
+Example:
+curl -X POST "http://localhost:8000/api/orchestrator/systems/2/instances/query/" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: sessionid=<your_session_cookie>" \
+  -d '{
+    "query": "MATCH (dt_filter)-[r]->(n) RETURN dt_filter, r, n LIMIT 25"
+  }'
+
+6) Query temporal no Influx com escopo organizacional e vinculo ao sistema
+Endpoint: POST /api/orchestrator/systems/{system_id}/timeseries/query/
+Important:
+- device_identifier e obrigatorio para escopo estrito.
+- O device precisa estar dentro da organizacao do sistema e ja vinculado a pelo menos uma propriedade de DT desse sistema.
+Example:
+curl -X POST "http://localhost:8000/api/orchestrator/systems/2/timeseries/query/" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: sessionid=<your_session_cookie>" \
+  -d '{
+    "device_identifier": "b6ac7f00-6f6c-11ef-987f-9f26ab123456",
+    "property_name": "temperature",
+    "measurement": "latency_measurement",
+    "last_minutes": 120,
+    "limit": 300
+  }'
+
+7) Associacao manual de propriedade (modo deterministico)
+Endpoint: POST /api/orchestrator/systems/{system_id}/instances/{dtinstance_id}/properties/{property_id}/connect/
+Important:
+- Esse endpoint faz apenas a associacao entre a propriedade do DT e a propriedade do device.
+- A associacao manual nao deve ser interpretada como envio de comando ao device.
+Example:
+curl -X POST "http://localhost:8000/api/orchestrator/systems/2/instances/10/properties/55/connect/" \
+  -H "Content-Type: application/json" \
+  -H "Cookie: sessionid=<your_session_cookie>" \
+  -d '{
+    "property_id": 55,
+    "device_property_id": 302
+  }'

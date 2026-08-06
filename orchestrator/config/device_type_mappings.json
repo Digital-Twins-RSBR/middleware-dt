@@ -1,0 +1,25 @@
+{
+  "LightBulb": [
+    {"name": "status", "type": "Boolean", "rpc_read_method": "checkStatus", "rpc_write_method": "switchLed"}
+  ],
+  "Pump": [
+    {"name": "status", "type": "Boolean", "rpc_read_method": "checkStatus", "rpc_write_method": "switchPump"}
+  ],
+  "Irrigation": [
+    {"name": "status", "type": "Boolean", "rpc_read_method": "checkStatus", "rpc_write_method": "switchIrrigation"}
+  ],
+  "Temperature Sensor": [
+    {"name": "temperature", "type": "Double", "rpc_read_method": "checkStatus"}
+  ],
+  "Soil Humidity Sensor": [
+    {"name": "humidity", "type": "Double", "rpc_read_method": "checkStatus"}
+  ],
+  "AirConditioner": [
+    {"name": "temperature", "type": "Double", "rpc_read_method": "checkStatus", "rpc_write_method": "setTemperature"},
+    {"name": "humidity", "type": "Double", "rpc_read_method": "checkStatus", "rpc_write_method": "setHumidity"},
+    {"name": "status", "type": "Boolean", "rpc_read_method": "checkStatus", "rpc_write_method": "switchStatus"}
+  ],
+  "Pool": [
+    {"name": "status", "type": "Boolean", "rpc_read_method": "checkStatus", "rpc_write_method": "switchPool"}
+  ]
+}

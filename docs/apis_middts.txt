@@ -1,0 +1,55 @@
+MIDDTS API CATALOG
+Generated at: 2026-04-17T20:52:36
+Base API prefix: /api
+Note: Authentication and organization scoping rules may apply per endpoint.
+
+[CORE]
+POST /api/core/users/ | handler=create_user | source=core/api.py
+POST /api/core/organizations/ | handler=create_organization | source=core/api.py
+GET /api/core/organizations/ | handler=list_organizations | source=core/api.py
+POST /api/core/organizations/{organization_id}/members/ | handler=add_organization_member | source=core/api.py
+POST /api/core/token/ | handler=login | source=core/api.py
+POST /api/core/gatewaysiot/ | handler=create_gateway | source=core/api.py
+GET /api/core/gatewayiot/{gatewayiot_id}/ | handler=get_gatewayiot | source=core/api.py
+GET /api/core/gatewaysiot/ | handler=list_gateways | source=core/api.py
+GET /api/core/gatewayiot/{gateway_id}/jwt/ | handler=get_jwt_token_gateway | source=core/api.py
+GET /api/core/gatewayiot/{gateway_id}/check/ | handler=check_gateway_access | source=core/api.py
+POST /api/core/token/ | handler=obtain_token | source=core/api.py
+POST /api/core/token/refresh/ | handler=refresh_token | source=core/api.py
+GET /api/core/protected-endpoint/ | handler=protected_endpoint | source=core/api.py
+
+[FACADE]
+GET /api/facade/devices/ | handler=list_devices | source=facade/api.py
+POST /api/facade/devices/{device_id}/rpc/ | handler=call_device_rpc | source=facade/api.py
+GET /api/facade/gatewaysiot/{gateway_id}/discover-devices/ | handler=discover_devices | source=facade/api.py
+GET /api/facade/devices/{device_id}/rpc-methods/ | handler=list_device_rpc_methods | source=facade/api.py
+
+[ORCHESTRATOR]
+POST /api/orchestrator/systems/ | handler=create_system | source=orchestrator/api.py
+PUT /api/orchestrator/systems/{system_id}/ | handler=update_system | source=orchestrator/api.py
+GET /api/orchestrator/systems/{system_id}/ | handler=get_system | source=orchestrator/api.py
+GET /api/orchestrator/systems/ | handler=list_system | source=orchestrator/api.py
+POST /api/orchestrator/systems/{system_id}/dtdlmodels/ | handler=create_dtdlmodel | source=orchestrator/api.py
+POST /api/orchestrator/systems/{system_id}/dtdlmodels/bulk/ | handler=create_multiple_dtdlmodels | source=orchestrator/api.py
+PUT /api/orchestrator/systems/{system_id}/dtdlmodels/{dtdlmodel_id}/ | handler=update_dtdlmodel | source=orchestrator/api.py
+GET /api/orchestrator/systems/{system_id}/dtdlmodels/ | handler=list_dtdlmodels | source=orchestrator/api.py
+GET /api/orchestrator/systems/{system_id}/dtdlmodels/{dtdl_model_id}/ | handler=get_dtdlmodel | source=orchestrator/api.py
+POST /api/orchestrator/systems/{system_id}/dtdlmodels/batch/ | handler=create_dtdlmodels_batch | source=orchestrator/api.py
+POST /api/orchestrator/systems/{system_id}/instances/ | handler=create_dtinstance | source=orchestrator/api.py
+POST /api/orchestrator/systems/{system_id}/instances/batch/ | handler=create_instances_batch | source=orchestrator/api.py
+GET /api/orchestrator/systems/{system_id}/instances/ | handler=list_instances | source=orchestrator/api.py
+GET /api/orchestrator/systems/{system_id}/instances/{dtinstance_id} | handler=get_instance | source=orchestrator/api.py
+POST /api/orchestrator/systems/{system_id}/instances/{dtinstance_id}/bind/ | handler=bind_dtinstance_device | source=orchestrator/api.py
+PUT /api/orchestrator/systems/{system_id}/instances/{dtinstance_id}/properties/{property_id}/ | handler=update_causal_property | source=orchestrator/api.py
+GET /api/orchestrator/systems/{system_id}/instances/{dtinstance_id}/properties/{property_id}/value/ | handler=get_property_value | source=orchestrator/api.py
+GET /api/orchestrator/systems/{system_id}/relationships/ | handler=list_relationships | source=orchestrator/api.py
+POST /api/orchestrator/systems/{system_id}/instances/relationships/ | handler=create_relationships | source=orchestrator/api.py
+DELETE /api/orchestrator/systems/{system_id}/relationships/ | handler=delete_relationships | source=orchestrator/api.py
+GET /api/orchestrator/systems/{system_id}/instances/properties/connected/ | handler=list_associated_properties | source=orchestrator/api.py
+POST /api/orchestrator/systems/{system_id}/instances/{dtinstance_id}/properties/{property_id}/connect/ | handler=associate_property | source=orchestrator/api.py
+POST /api/orchestrator/systems/{system_id}/instances/autobinding/preview/ | handler=preview_autobinding | source=orchestrator/api.py
+POST /api/orchestrator/systems/{system_id}/instances/autobinding/apply/ | handler=apply_autobinding | source=orchestrator/api.py
+POST /api/orchestrator/systems/{system_id}/timeseries/query/ | handler=query_temporal_data | source=orchestrator/api.py
+POST /api/orchestrator/systems/{system_id}/instances/query/ | handler=execute_cypher_query | source=orchestrator/api.py
+POST /api/orchestrator/systems/{system_id}/instances/hierarchical/ | handler=create_hierarchical_instances | source=orchestrator/api.py
+

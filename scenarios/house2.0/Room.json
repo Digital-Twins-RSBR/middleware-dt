@@ -1,0 +1,40 @@
+{
+  "@context": ["dtmi:dtdl:context;3", "dtmi:dtdl:extension:quantitativeTypes;1"],
+  "@id": "dtmi:housegen:Room;1",
+  "@type": "Interface",
+  "displayName": "Room",
+  "contents": [
+    {
+      "@type": ["Property", "Area"],
+      "name": "size",
+      "schema": "double",
+      "writable": true,
+      "unit": "squareFoot"
+    },
+    {
+      "@type": ["Telemetry", "Temperature"],
+      "name": "temperature",
+      "schema": "double",
+      "unit": "degreeCelsius"
+    },
+    {
+      "@type": "Telemetry",
+      "name": "gas",
+      "schema": "boolean"
+    },
+    {
+      "@type": "Relationship",
+      "name": "has_lights",
+      "minMultiplicity": 0,
+      "maxMultiplicity": 5,
+      "target": "dtmi:housegen:LightBulb;1"
+    },
+    {
+      "@type": "Relationship",
+      "name": "has_airconditioner",
+      "minMultiplicity": 0,
+      "maxMultiplicity": 1,
+      "target": "dtmi:housegen:AirConditioner;1"
+    }
+  ]
+}

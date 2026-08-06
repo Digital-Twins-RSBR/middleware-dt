@@ -13,3 +13,4 @@ settings.py
 *__pycache__*
 .env
 __pycache__/
+cleanup_docker.sh

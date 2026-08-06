@@ -1,0 +1,35 @@
+{
+  "@context": ["dtmi:dtdl:context;3", "dtmi:dtdl:extension:causal;1"],
+  "@id": "dtmi:housegen:PoolPump;1",
+  "@type": "Interface",
+  "displayName": "Pump",
+  "contents": [
+    {
+      "@type": "Telemetry",
+      "name": "pressure",
+      "schema": "double",
+      "displayName": "Pressure",
+      "description": "The pressure of the pump in PSI"
+    },
+    {
+      "@type": "Telemetry",
+      "name": "waterflowRate",
+      "schema": "double",
+      "displayName": "Flow Rate",
+      "description": "The flow rate of the pump in GPM"
+    },
+    {
+      "@type": "Property",
+      "name": "operationalStatus",
+      "schema": "string",
+      "displayName": "Status",
+      "description": "The operational status of the pump"
+    },
+    {
+      "@type": ["Property", "Causal"],
+      "name": "status",
+      "schema": "boolean",
+      "description": "Indicates if the pump is on or off"
+    }
+  ]
+}

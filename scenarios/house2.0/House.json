@@ -1,0 +1,39 @@
+{
+  "@context": "dtmi:dtdl:context;3",
+  "@id": "dtmi:housegen:House;1",
+  "@type": "Interface",
+  "displayName": "House",
+  "contents": [
+    {
+      "@type": "Property",
+      "name": "name",
+      "writable": true,
+      "schema": "string"
+    },
+    {
+      "@type": "Property",
+      "name": "address",
+      "writable": true,
+      "schema": "string"
+    },
+    {
+      "@type": "Relationship",
+      "name": "has_rooms",
+      "target": "dtmi:housegen:Room"
+    },
+    {
+      "@type": "Relationship",
+      "name": "has_pool",
+      "minMultiplicity": 0,
+      "maxMultiplicity": 1,
+      "target": "dtmi:housegen:Pool"
+    },
+    {
+      "@type": "Relationship",
+      "name": "has_gardens",
+      "minMultiplicity": 0,
+      "maxMultiplicity": 5,
+      "target": "dtmi:housegen:Garden"
+    }
+  ]
+}

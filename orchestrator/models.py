@@ -1,12 +1,12 @@
 from enum import unique
 from pickle import FALSE
 from typing import Iterable
+from django.conf import settings
 from django.db import IntegrityError, models
 import requests
 from requests.exceptions import RequestException
-from sentence_transformers import SentenceTransformer, util
 
-from core.models import DTDLParserClient
+from core.parser_client import get_dtdl_parser_url
 from facade.models import Device, Property, RPCCallTypes
 import time
 
@@ -18,6 +18,8 @@ from orchestrator.utils import normalize_name
 class SystemContext(models.Model): 
     name = models.CharField(max_length=255)
     description = models.TextField()
+    organization = models.ForeignKey('core.Organization', null=True, blank=True, on_delete=models.SET_NULL)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
 
     class Meta:
         verbose_name = "System context"
@@ -33,6 +35,7 @@ class DTDLModel(models.Model):
     name = models.CharField(max_length=255)
     specification = models.JSONField()
     parsed_specification = models.JSONField(null=True, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
 
     class Meta:
         verbose_name = "DTDL model"
@@ -67,8 +70,7 @@ class DTDLModel(models.Model):
             "id": spec_id,
             "specification": specification
         }
-        parser_client = DTDLParserClient.get_active()
-        parser_url = parser_client.url
+        parser_url = get_dtdl_parser_url()
         try:
             response = requests.post(parser_url, json=payload)
             response.raise_for_status()  # Levanta um erro se o status code for 4xx/5xx
@@ -272,7 +274,9 @@ class DigitalTwinInstanceProperty(models.Model):
         return f"{self.dtinstance}({self.device_property.device.name if self.device_property else 'Sem dispositivo'}) {self.property} {'(Causal)' if self.property.isCausal() else ''} {self.value}"
     
     class Meta:
-        unique_together = ('dtinstance', 'property', 'device_property')
+        # Ensure uniqueness per dtinstance + property. device_property may be nullable and
+        # should not cause duplicate logical properties when associating devices.
+        unique_together = ('dtinstance', 'property')
         verbose_name = "Digital twin instance property"
         verbose_name_plural = "Digital twin instances properties"
 
@@ -281,82 +285,177 @@ class DigitalTwinInstanceProperty(models.Model):
         if self.device_property is not None:
             return  # já está associado
 
-        # Define modelo semântico
-        model = SentenceTransformer("all-MiniLM-L6-v2")
+        from orchestrator.helpers import compute_similarity
 
         def extract_root_context(hierarchy):
-            # Retorna o primeiro elemento da hierarquia, se existir
             return hierarchy[0].strip().lower() if hierarchy else None
 
-        # Monta texto do digital twin property com contexto hierárquico
         hierarchy = self.get_hierarchy()
         norm_hierarchy = [normalize_name(h) for h in hierarchy]
         dt_text = " ".join(norm_hierarchy + [normalize_name(self.dtinstance.model.name), normalize_name(self.property.schema or "")])
         dt_root_context = extract_root_context(norm_hierarchy)
 
-        dt_embedding = model.encode(dt_text, convert_to_tensor=True)
-
         best_device_text = ''
         best_match = None
         best_score = 0.0
 
-        # Busca dispositivos sem associação
-
-        for property in Property.objects.filter(digitaltwininstanceproperty__isnull=True):
-            metadata = property.device.metadata or ""
-            # Normaliza device name e extrai contexto
-            device_name_norm = normalize_name(property.device.name)
-            device_type_norm = normalize_name(property.device.type.name) if property.device.type else ''
-            property_name_norm = normalize_name(property.name)
-            property_type_norm = normalize_name(str(property.type))
+        for prop in Property.objects.filter(digitaltwininstanceproperty__isnull=True):
+            metadata = prop.device.metadata or ""
+            device_name_norm = normalize_name(prop.device.name)
+            device_type_norm = normalize_name(prop.device.type.name) if prop.device.type else ''
+            property_name_norm = normalize_name(prop.name)
+            property_type_norm = normalize_name(str(prop.type))
             metadata_norm = normalize_name(metadata)
-            # Extrai tokens do device name normalizado
+
             device_hierarchy_tokens = device_name_norm.split()
-            # Descobre quantos tokens tem o root do DT (ex: 'house 1' -> 2 tokens)
             dt_root_tokens = dt_root_context.split() if dt_root_context else []
             num_root_tokens = len(dt_root_tokens)
             device_root_context = " ".join(device_hierarchy_tokens[:num_root_tokens]) if num_root_tokens > 0 else None
 
-            # Só compara semanticamente se o contexto-raiz for igual
             if dt_root_context and device_root_context and dt_root_context != device_root_context:
                 continue
 
-            # device_text inclui device name, type, metadata, property name/type
             device_text = f"{device_name_norm} {device_type_norm} {metadata_norm} {property_name_norm} {property_type_norm}"
 
-            device_embedding = model.encode(device_text, convert_to_tensor=True)
-            score = float(util.cos_sim(dt_embedding, device_embedding)[0][0])
-
-            # Debug: printa o score de todos os devices
-            # print(f"[MIDDTS][DEBUG] DT: '{dt_text}' vs Device: '{device_text}' = {score:.4f}")
+            score = compute_similarity(dt_text, device_text)
 
             if score > best_score:
                 best_device_text = device_text
-                best_match = property
+                best_match = prop
                 best_score = score
+
         if best_match and best_score >= 0.60:
             self.device_property = best_match
             print(f"[MIDDTS] Associação automática: '{self.property.name}' (DT: {dt_text}) → '{best_match.name}' (Device: {best_device_text}) (score: {best_score:.2f})")
 
     def save(self, *args, **kwargs):
-        called_binding = False
+        import time
+        from datetime import datetime
+        
+        save_start = time.time()
+        property_name = getattr(self.property, 'name', f'prop_{getattr(self, "id", "new")}')
+        print(f"[{datetime.now().isoformat()}] 💾 SAVE START: Property '{property_name}' (DT: {getattr(self.dtinstance, 'id', 'unknown')})")
+        
+        # Allow callers to opt-out of propagating the DT property change to the
+        # associated device/ThingsBoard. This avoids blocking network calls in
+        # high-frequency/periodic updaters (e.g. update_causal_property).
+        propagate_to_device = True
+        if 'propagate_to_device' in kwargs:
+            try:
+                propagate_to_device = bool(kwargs.pop('propagate_to_device'))
+                print(f"[{datetime.now().isoformat()}] 🔧 Propagate to device: {propagate_to_device}")
+            except Exception:
+                propagate_to_device = True
+        
+        # Extract correlation_id from kwargs for end-to-end tracing
+        correlation_id = kwargs.pop('correlation_id', None)
+        # Indicates sent_timestamp for this command was already logged upstream
+        m2s_sent_logged = bool(kwargs.pop('m2s_sent_logged', False))
+        if correlation_id:
+            print(f"[{datetime.now().isoformat()}] 🔗 Correlation ID: {correlation_id}")
+
+        # called_binding = False
+        binding_start = time.time()
         if not self.device_property:
             if self.property.isCausal():
-                self.suggest_device_binding()
-                called_binding = True
+                print(f"[{datetime.now().isoformat()}] 🔗 Property '{property_name}' is causal but has no device binding")
+                # self.suggest_device_binding()
+                # called_binding = True
+                pass
+        else:
+            print(f"[{datetime.now().isoformat()}] 🔗 Property '{property_name}' has device binding: {self.device_property.name}")
+        binding_time = time.time() - binding_start
+
+        # Get old value for comparison
+        old_value_start = time.time()
         old_value = DigitalTwinInstanceProperty.objects.get(pk=self.id).value if self.id else ''
+        old_value_time = time.time() - old_value_start
+        print(f"[{datetime.now().isoformat()}] 📊 Property '{property_name}' value change: '{old_value}' → '{self.value}' (fetch_time: {old_value_time:.3f}s)")
+        
+        # Save to database
+        db_save_start = time.time()
         super().save(*args, **kwargs)
+        db_save_time = time.time() - db_save_start
+        print(f"[{datetime.now().isoformat()}] 🗃️ Database save completed for '{property_name}' in {db_save_time:.3f}s")
+        
+        # Update device_property field if needed
+        device_update_start = time.time()
         # Se a associação automática foi feita, garantir persistência
-        if called_binding and self.device_property:
+        # if called_binding and self.device_property:
+        if self.device_property:
             # Salva novamente para garantir que o device_property seja persistido
             super().save(update_fields=["device_property"])
-        if self.id and self.device_property and self.property.isCausal():
+        device_update_time = time.time() - device_update_start
+        print(f"[{datetime.now().isoformat()}] 🔗 Device property update for '{property_name}' took {device_update_time:.3f}s")
+
+        # Only propagate to the device (which may trigger ThingsBoard RPCs) when
+        # explicitly allowed. This avoids synchronous HTTP calls from periodic updaters.
+        propagation_time = 0
+        if propagate_to_device and self.id and self.device_property and self.property.isCausal():
+            propagation_start = time.time()
+            print(f"[{datetime.now().isoformat()}] 🚀 Starting device propagation for '{property_name}' to device '{self.device_property.name}'")
+            
             device_property = self.device_property
+            old_device_value = device_property.value
             device_property.value = self.value
-            device_property.save()
+            
+            device_save_start = time.time()
+            print(f"[{datetime.now().isoformat()}] 📤 Saving to device property: '{old_device_value}' → '{device_property.value}'")
+            # Propagate tracing/metrics flags to device property save
+            if correlation_id:
+                device_property.save(correlation_id=correlation_id, m2s_sent_logged=m2s_sent_logged)
+            else:
+                device_property.save(m2s_sent_logged=m2s_sent_logged)
+            device_save_time = time.time() - device_save_start
+            print(f"[{datetime.now().isoformat()}] ✅ Device property save completed in {device_save_time:.3f}s")
+            
+            # Check if device changed the value back
+            verification_start = time.time()
             if device_property.value != self.value:
+                print(f"[{datetime.now().isoformat()}] ⚠️ Device property value changed during save: '{self.value}' → '{device_property.value}'")
                 self.value = old_value if old_value else device_property.value if device_property.value else ''
                 super().save(*args, **kwargs)
+            verification_time = time.time() - verification_start
+            
+            propagation_time = time.time() - propagation_start
+            print(f"[{datetime.now().isoformat()}] 🏁 Device propagation completed for '{property_name}' in {propagation_time:.3f}s (device_save: {device_save_time:.3f}s, verification: {verification_time:.3f}s)")
+        else:
+            if not propagate_to_device:
+                print(f"[{datetime.now().isoformat()}] ⏭️ Skipping device propagation for '{property_name}' (disabled)")
+            elif not self.device_property:
+                print(f"[{datetime.now().isoformat()}] ⏭️ Skipping device propagation for '{property_name}' (no device binding)")
+            elif not self.property.isCausal():
+                print(f"[{datetime.now().isoformat()}] ⏭️ Skipping device propagation for '{property_name}' (not causal)")
+
+        total_save_time = time.time() - save_start
+        print(f"[{datetime.now().isoformat()}] 💾 SAVE COMPLETE: Property '{property_name}' total time: {total_save_time:.3f}s (binding: {binding_time:.3f}s, db_save: {db_save_time:.3f}s, device_update: {device_update_time:.3f}s, propagation: {propagation_time:.3f}s)")
+        
+        # Log performance warnings
+        if total_save_time > 1.0:
+            print(f"[{datetime.now().isoformat()}] 🐌 SLOW SAVE WARNING: Property '{property_name}' took {total_save_time:.3f}s (threshold: 1.0s)")
+        if propagation_time > 0.5:
+            print(f"[{datetime.now().isoformat()}] 🐌 SLOW PROPAGATION WARNING: Property '{property_name}' propagation took {propagation_time:.3f}s (threshold: 0.5s)")
+
+    @classmethod
+    def dedupe_for_instance(cls, dtinstance):
+        """Remove duplicate DigitalTwinInstanceProperty rows for the given instance.
+        Keeps the row that has a non-null device_property if present, else keeps the first.
+        Returns number of removed rows."""
+        qs = cls.objects.filter(dtinstance=dtinstance).order_by('property_id', '-device_property_id', 'id')
+        removed = 0
+        seen = set()
+        for row in qs:
+            key = (row.property_id)
+            if key in seen:
+                # duplicate - delete
+                try:
+                    row.delete()
+                    removed += 1
+                except Exception:
+                    pass
+            else:
+                seen.add(key)
+        return removed
 
     def causal(self):
         return self.property.isCausal()

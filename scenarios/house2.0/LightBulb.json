@@ -1,0 +1,13 @@
+{
+  "@context": ["dtmi:dtdl:context;3", "dtmi:dtdl:extension:causal;1"],
+  "@id": "dtmi:housegen:LightBulb;1",
+  "@type": "Interface",
+  "displayName": "LightBulb",
+  "contents": [
+    {
+      "@type": ["Property", "Causal"],
+      "name": "status",
+      "schema": "boolean"
+    }
+  ]
+}

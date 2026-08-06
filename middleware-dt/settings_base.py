@@ -8,8 +8,62 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 
 DEBUG = os.getenv("DEBUG", "True").lower() in ("1", "true", "yes", "on")
-ALLOWED_HOSTS = [h for h in os.getenv("ALLOWED_HOSTS", "*").split(",") if h]
-CSRF_TRUSTED_ORIGINS = [o for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o]
+
+# Sensible defaults for local/testing environments; can be overridden via .env.
+# Keep defaults restricted to localhost/loopback and only add HOST_IP when
+# explicitly provided.
+host_ip_env = os.getenv("HOST_IP", "").strip()
+DEFAULT_ALLOWED = ["localhost", "127.0.0.1"]
+if host_ip_env:
+    DEFAULT_ALLOWED.append(host_ip_env)
+ALLOWED_HOSTS = [h for h in os.getenv("ALLOWED_HOSTS", ",".join(DEFAULT_ALLOWED)).split(",") if h]
+
+# CSRF trusted origins must include scheme.
+# Source of truth is ALLOWED_HOSTS plus optional extra env entries.
+MIDDLEWARE_PORT = os.getenv("MIDDLEWARE_PORT", "8000")
+
+default_csrf = []
+
+def _add_csrf_for_host(host):
+    h = host.strip()
+    if not h or h == "*":
+        return
+    default_csrf.append(f"http://{h}")
+    default_csrf.append(f"https://{h}")
+    default_csrf.append(f"http://{h}:{MIDDLEWARE_PORT}")
+    default_csrf.append(f"https://{h}:{MIDDLEWARE_PORT}")
+
+# Always include local defaults.
+_add_csrf_for_host("localhost")
+_add_csrf_for_host("127.0.0.1")
+
+# If HOST_IP is explicitly configured, replicate to CSRF automatically.
+if host_ip_env:
+    _add_csrf_for_host(host_ip_env)
+
+# Replicate explicit ALLOWED_HOSTS entries to CSRF.
+for host in ALLOWED_HOSTS:
+    _add_csrf_for_host(host)
+
+# Codespaces/GitHub forwarded domains (dynamic when env vars are available).
+codespace_name = os.getenv("CODESPACE_NAME", "").strip()
+codespaces_domain = os.getenv("GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "").strip() or "app.github.dev"
+if codespace_name and codespaces_domain:
+    default_csrf.append(f"https://{codespace_name}-{MIDDLEWARE_PORT}.{codespaces_domain}")
+
+# In dev, ALLOWED_HOSTS='*' is common; include safe wildcard patterns for
+# forwarded domains so onboarding does not require manual CSRF edits.
+if DEBUG and "*" in [h.strip() for h in ALLOWED_HOSTS]:
+    default_csrf.append("https://*.app.github.dev")
+    default_csrf.append("https://*.github.dev")
+
+# Optional extra trusted origins from env are merged (not replacing defaults).
+env_csrf = [o.strip() for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+CSRF_TRUSTED_ORIGINS = list(dict.fromkeys(default_csrf + env_csrf))
+
+# Honor reverse-proxy headers (nginx/codespaces forwarding).
+USE_X_FORWARDED_HOST = True
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -36,6 +90,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
+    'core.middleware.JWTAuthMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'corsheaders.middleware.CorsMiddleware',
 ]
@@ -111,10 +166,32 @@ STATIC_ROOT = BASE_DIR + "/" + "static/"
 
 #### Configuração do NEO4J
 
-NEO4J_URL = os.getenv("NEO4J_URL", "bolt://localhost:7687")
+NEO4J_URL = os.getenv("NEO4J_URL", "localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
-config.DATABASE_URL = f"bolt://{NEO4J_USER}:{NEO4J_PASSWORD}@{NEO4J_URL}"
+
+# Build neomodel DATABASE_URL robustly. Accept NEO4J_URL in forms:
+#   - host:port
+#   - bolt://host:port
+#   - neo4j://host:port
+#   - bolt://user:pass@host:port
+from urllib.parse import urlsplit
+
+_raw_neo = NEO4J_URL
+_parsed = urlsplit(_raw_neo)
+if _parsed.scheme:
+    # NEO4J_URL already contains a scheme. If it already contains credentials,
+    # keep them, otherwise inject NEO4J_USER/NEO4J_PASSWORD.
+    scheme = _parsed.scheme
+    netloc = _parsed.netloc
+    path = _parsed.path or ''
+    if '@' in netloc:
+        config.DATABASE_URL = f"{scheme}://{netloc}{path}"
+    else:
+        config.DATABASE_URL = f"{scheme}://{NEO4J_USER}:{NEO4J_PASSWORD}@{netloc}{path}"
+else:
+    # NEO4J_URL has no scheme, assume bolt
+    config.DATABASE_URL = f"bolt://{NEO4J_USER}:{NEO4J_PASSWORD}@{_raw_neo}"
 
 SESSION_COOKIE_NAME = 'sessionid_middts'
 CSRF_COOKIE_NAME = 'csrftoken_middts'
@@ -137,7 +214,30 @@ INFLUXDB_PORT = int(os.getenv("INFLUXDB_PORT", 8086))
 INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "iot_data")
 INFLUXDB_ORGANIZATION = os.getenv("INFLUXDB_ORGANIZATION", "middts")
 INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN", "xxx")
-USE_INFLUX_TO_EVALUATE = True
+
+
+def _env_bool(name, default=False):
+    return str(os.getenv(name, str(default))).strip().lower() in ("1", "true", "yes", "on")
+
+
+USE_INFLUX_TO_EVALUATE = _env_bool("USE_INFLUX_TO_EVALUATE", True)
+ENABLE_INFLUX_LATENCY_MEASUREMENTS = _env_bool("ENABLE_INFLUX_LATENCY_MEASUREMENTS", False)
+DTDL_PARSER_URL = os.getenv("DTDL_PARSER_URL", "http://parser:8080/api/DTDLModels/parse/")
+
+# Device type mapping configuration: when True, the orchestrator will
+# attempt to create properties from a static mapping file. For testing we
+# allow disabling this so telemetry-based inference is used alone.
+DEVICE_TYPE_MAPPING_ENABLED = _env_bool('DEVICE_TYPE_MAPPING_ENABLED', True)
 
 # Digital Twin Settings
 DEFAULT_INACTIVITY_TIMEOUT = 60
+# Controla integração com Neo4j. Por padrão desabilitado para evitar tentativas
+# de conexão em ambientes que não têm Neo4j disponível.
+USE_NEO4J = _env_bool('USE_NEO4J', False)
+
+# Cypher query execution settings: timeout (seconds) and maximum rows returned
+# These can be overridden via environment variables `CYPHER_QUERY_TIMEOUT` and
+# `CYPHER_QUERY_MAX_ROWS`.
+# Default timeout increased to 30s to accommodate potentially slower Neo4j responses.
+CYPHER_QUERY_TIMEOUT = int(os.getenv('CYPHER_QUERY_TIMEOUT', 30))
+CYPHER_QUERY_MAX_ROWS = int(os.getenv('CYPHER_QUERY_MAX_ROWS', 1000))

@@ -19,6 +19,8 @@ O objetivo principal é criar uma camada intermediária em Python para conectar 
 - **Neo4j (banco de dados orientado a grafos)**  
   Usado para representar gêmeos digitais (nós) e suas propriedades, além de conexões (arestas) entre gêmeos. Permite consultas complexas e análise de relacionamentos hierárquicos e causais.
 
+- **InfluxDB (banco de dados temporal)**
+  Usado para armazenar séries temporais, leituras de sensores e métricas históricas do middleware e dos dispositivos integrados.
 ---
 
 ## Arquitetura do Middleware
@@ -81,349 +83,105 @@ Esta arquitetura modular permite fácil manutenção e expansão futura.
 
 ---
 
+## Comece por aqui
 
-## Iniciando o Projeto
-
-1. **Instale as dependências:**
-   ```bash
-   pip install -r requirements/base.txt
-   ```
-
-2. **Configure o banco de dados relacional (PostgreSQL) no arquivo middleware-dt/settings.py:**
-
-   ```python
-        DATABASES = {
-                'default': {
-                        'ENGINE': 'django.db.backends.postgresql',
-                        'NAME': 'nomebanco',
-                        'USER': 'postgres',
-                        'PASSWORD': 'postgres',
-                        'HOST': 'localhost',
-                        'PORT': '5432',
-                }
-        }
-   ```
-3. **Configure o banco orientado a grafos (Neo4j) no middleware-dt/settings.py:**
-    ```python
-        from neomodel import config
-        # Configuração do Neo4j
-        config.DATABASE_URL = "bolt://neo4j:password@localhost:7687"
-    ```
-
-4. **Crie e aplique as migrações do banco de dados:**
-    ```bash
-        python manage.py makemigrations
-        python manage.py migrate
-    ```
-
-5. **Crie um superusuário:**
-    ```bash
-        python manage.py createsuperuser
-    ```
-6. **Execute o servidor de desenvolvimento::**
-    ```bash
-        python manage.py runserver
-    ```
-
-## Instalando e Configurando Neo4j no Ubuntu
-1. Adicionar a chave GPG:
-```bash
-curl -fsSL https://debian.neo4j.com/neotechnology.g
-
-```
-
-2. Adicionar o repositório do Neo4j:
-
-```bash
-echo "deb [signed-by=/usr/share/keyrings/neo4j.gpg] https://debian.neo4j.com stable 4.1" | sudo tee -a /etc/apt/sources.list.d/neo4j.list
-
-```
-3. Instalar o Neo4j:
-```bash
-sudo apt update
-sudo apt install neo4j
-
-```
-
-4. Iniciar o serviço Neo4j:
-```bash
-sudo systemctl start neo4j.service
-```
-Mais detalhes: [Tutorial DigitalOcean](https://www.digitalocean.com/community/tutorials/how-to-install-and-configure-neo4j-on-ubuntu-20-04)
+Você pode usar o middleware de duas formas principais e complementar com os guias de suporte abaixo.
 
-## Executando o Neo4j em um Container Docker
+### Fluxo rápido (primeira execução)
 
-```bash
-docker run -d \
-  --name neo4j-container \
-  -p 7474:7474 -p 7687:7687 \
-  -e NEO4J_AUTH=neo4j/password \
-  neo4j:latest
-```
+Se você quer apenas subir o ambiente completo local pela primeira vez, siga esta sequência:
 
-**Dica (WSL): Se estiver utilizando WSL, adicione no arquivo /etc/wsl.conf:**
-```
-[network]
-generateResolvConf = false
-```
+1. `cp .env.example .env`
+2. `make build-with-deps`
+3. `make up`
+4. `make healthcheck`
+5. `make seed-house`
 
-Esta documentação oferece uma visão geral da arquitetura, instalação e primeiros passos no uso do middleware-dt. Conforme o projeto evoluir, serão adicionados mais detalhes, endpoints específicos, exemplos de requisições e melhores práticas de desenvolvimento.
+Se algum contexto de build estiver faltando (`iot_simulator` ou `middts-client`), o `make` vai avisar com instruções de correção.
 
-## Fluxo de Uso do Middleware - Test Case thingsboard
-1. Cadastrando dispositivos físicos no gateway IoT (ThingsBoard)
-- No ThingsBoard (local, nuvem ou demo.thingsboard.io), cadastre o(s) dispositivo(s) físico(s).
-- Certifique-se de que o ThingsBoard esteja conectado ao dispositivo físico, permitindo enviar chamadas RPC e monitorar o estado.
-    
-2. Conectando o dispositivo físico ao middleware-dt
-- Acesse http://{endereco_middleware}/admin e cadastre o gateway IoT.
-- Pela API do middleware-dt, importe os dispositivos do gateway IoT:
+### <a id="execucao-docker-make"></a>Execução com Docker e Make
 
-  - Endpoint: /gatewaysiot/{gateway_id}/discover-devices
-  - O middleware irá cadastrar localmente os dispositivos encontrados no gateway IoT.
+Fluxo recomendado para subir a stack completa com Docker Compose e `make`.
 
-3. Associando o dispositivo ao modelo DTDL do gêmeo digital
-- Importe o modelo DTDL para o middleware-dt:
+[Abrir guia de execução com Docker e Make](docs/demo-make.md)
 
-  - Endpoint: /import-dtdl/
-  - Envie um JSON do modelo DTDL. O middleware criará a representação interna.
+### <a id="instalacao-manual"></a>Instalação manual
 
-- Crie uma instância desse modelo relacionando-a ao dispositivo físico já cadastrado no middleware.
+Fluxo para subir cada serviço separadamente fora do compose principal.
 
-4. Outros comandos úteis
-- Executar um container de uma API auxiliar parser DTDL:
-```bash
-docker run -p 8082:8080 -p andregustavoo/parserwebapi:latest
-```
-- Ouvir eventos do gateway:
-```bash
-python manage.py listen_gateway
-```
+[Abrir guia de instalação manual](docs/instalacao-manual.md)
 
-## Uso da API do Middleware
-A API do middleware estará disponível para operações de consulta, criação e relação entre dispositivos físicos e seus gêmeos digitais. A documentação detalhada dos endpoints será disponibilizada conforme o projeto evoluir.
+### <a id="fluxo-thingsboard"></a>Fluxo com ThingsBoard
 
+Cenário funcional para cadastro de gateway, descoberta de devices e vínculo com DTDL.
 
-## 📖 Leitura Complementar
+[Abrir guia de fluxo com ThingsBoard](docs/fluxo-thingsboard.md)
 
-Para avaliação usando do Middts criamos um cenário no [HomeAssistant](https://www.home-assistant.io/). Para mais informações  consulte o [Cenário de testes usando o HomeAssistant](docs/HomeAssistant.md).
+### <a id="configuracoes-importantes"></a>Configurações importantes
 
+Resumo de parâmetros operacionais relevantes (como `DEFAULT_INACTIVITY_TIMEOUT`).
 
-<!-- # Caso de teste:
+[Abrir configurações importantes](docs/configuracoes-importantes.md)
 
-1) Cadastrando dispositivos físicos no gateway IOT(Thingsboard)
-        a) Em uma instancia do thingsboard(local, em núvem ou usando o ambiente demonstrativo https://demo.thingsboard.io) cadastre o(s) 
-        dispositivo(s) e faça-os conectar com o dispositivo físico.
-                - Com isso o thingsboard teria acesso a enviar chamadas RPCs e verificar o estado do dispositivo. 
-                - ** IMPORTANTE: Talvez precisemos definir algum padrão ou achar algum padrão de desenvolvimento do código nos dispositivos
+### <a id="relatorios-influxdb"></a>Relatórios InfluxDB
 
-2) Conectando dispositivo físico a uma instância sua no middleware:
-        a) No middleware-dt faça o cadastro do gateway IOT para conexão e abstração (http://{endereco_middleware}/admin).
-                - O objetivo principal do middleware-dt é ser uma camada de abstração entre o gêmeo digital e o dispositivo. No modelo proposto estamos abstraindo o gateway IOT do thingsboard para conexão com o dispositivo, e estamos oferecendo uma camada de api para se comunicar com o gêmeo digital propriamente dito.
-        b) Usando a api do middleware-dt importe os dados dos dispositivos físicos do gateway para cadastro.
-                - Usando o endpoint: /gatewaysiot/{gateway_id}/discover-devices - O middleware percorre os dispositivos do thingsboard e cadastra-os 
-                no middleware.
+Consultas e relatórios para análise de latência e métricas temporais.
 
-3) Conectando Instancia do dispositivo a uma instancia do modelo(DTDL) do gêmeo digital:
-        a) Importe o modelo DTDL para o middleware-dt usando o endpoint:  /import-dtdl/
-                - Recebe um json e cria o modelo no middleware-dt
-        b) Crie uma instância desse modelo relacionando-a com a instância do dispositivo físico no middleware-dt
-                - Ao criar uma instancia do modelo dtdl você pode relacionar a uma instancia do dispositivo físico.
+[Abrir documentação de relatórios InfluxDB](docs/README.md)
 
-4) #docker run -p 8082:8080 -p <porta>:8081 andregustavoo/parserwebapi:latest
-5) python manage.py listen_gateway -->
+### <a id="changelog-tecnico"></a>Changelog técnico
 
+Registro de mudanças de autenticação, parser e migrações recentes.
 
-# Configurações Importantes:
-O device type e o device do módulo facade tem o campo inactivityTimeout que é o responsável por definir o tempo de inatividade de um device. O tempo padrão que o MidDits vai usar pode ser redefinido no Settings a partir da configuração DEFAULT_INACTIVITY_TIMEOUT.
+[Abrir changelog técnico](docs/changelog.md)
 
-Sensores críticos: 15-30 segundos
-Dispositivos de baixa prioridade: 120-300 segundos
-Dispositivos com bateria limitada: 300-600 segundos
+## Visão geral
 
+O middleware conecta dispositivos físicos, gateway IoT, modelos DTDL e camadas de persistência relacional, grafo e séries temporais. A arquitetura segue quatro blocos principais:
 
+- `Orchestrator`: coordena os modelos de gêmeos digitais e a integração com o gateway IoT.
+- `Facade`: abstrai a comunicação com ThingsBoard ou outro gateway compatível.
+- `Core`: concentra a lógica central, autenticação, configurações e cadastros.
+- `Utils`: reúne utilitários compartilhados.
 
+## Codespaces, CSRF e ALLOWED_HOSTS (atualizações)
 
-Como configurar e executar o projeto utilizando Docker Compose. 
+Pequenas mudanças foram feitas para facilitar execução em ambientes GitHub Codespaces e similares:
 
+- Cada serviço (`middleware`, `client`, `iot_simulator`) agora deriva entradas seguras para `CSRF_TRUSTED_ORIGINS` a partir das variáveis de ambiente `CODESPACE_NAME` e `GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN` quando presentes. O formato gerado é:
 
+  `https://<CODESPACE_NAME>-<PORT>.<GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN>`
 
-- Docker instalado ([Instruções de instalação](https://docs.docker.com/get-docker/))
-- Docker Compose instalado ([Instruções de instalação](https://docs.docker.com/compose/install/))
+  - `MIDDLEWARE_PORT` (padrão `8000`) é usado para o `middleware`.
+  - `CLIENT_PORT` (padrão `8002`) é usado para o `client`.
+  - `SIMULATOR_PORT` (padrão `8001`) é usado para o `iot_simulator`.
 
+- Cada serviço também inclui `localhost`, `127.0.0.1` e, quando definido, `HOST_IP` em `ALLOWED_HOSTS` e em `CSRF_TRUSTED_ORIGINS` (com e sem porta).
 
-
-### 1. Criar o arquivo `.env`
-
-Crie um arquivo `.env` na raiz do projeto para armazenar as variáveis de ambiente:
-
-```bash
-touch .env
-```
-
-
-### 2. Adicionar variáveis de ambiente
-
-Dentro da raiz do projeto existe um arquivo .env.example que irá ajudar no preenchimento das variaveis. Adicione as variáveis no arquivo `.env` com suas respectivas configurações.
-
-
-### 1. Iniciar os containers
-
-Execute o comando abaixo para iniciar os containers:
-
-```bash
-docker compose up
-```
-- Para acessar a api: localhost:80 
-
-### 2. Verificar containers
-Para verificar se todos os containers estão funcionando corretamente, execute:
-
-```bash
-docker ps
-```
-Devem aparecer 5 containers:
-- nginx  
-- middleware-dt-middleware  
-- postgres:15
-- neo4j:5.8   
-- andregustavoo/parserwebapi:latest 
-
-
-### 3. Parar os containers
-
-Para interromper os containers, use a combinação de teclas:
-
-```bash
-Ctrl+C
-```
-
-### 4. Remover os containers
-
-Para remover os containers criados, execute:
-
-```bash
-docker compose down
-```
-
-
-
-### Criar um usuário administrador
-
-Após iniciar os containers, você pode criar um usuário administrador para o sistema com o seguinte comando:
-
-```bash
-docker compose exec middleware python manage.py createsuperuser
-
-
-# Executando o Projeto com Docker Compose
-
-O projeto pode ser facilmente executado com Docker Compose, incluindo todos os serviços necessários: PostgreSQL, Neo4j, Parser, InfluxDB e o Middleware Django (MidDiTS).
-
-## Pré-requisitos
-
-- Docker instalado ([Instruções de instalação](https://docs.docker.com/get-docker/))
-- Docker Compose instalado ([Instruções de instalação](https://docs.docker.com/compose/install/))
-
-## Configuração
-
-### 1. Crie um arquivo `.env`
-
-Copie o modelo:
-
-```bash
-cp .env.example .env
-```
-
-Edite o `.env` conforme necessário para o seu ambiente. O conteúdo mínimo recomendado:
+- Para ativar no Codespace, adicione ao arquivo `.env` (ou exporte no ambiente):
 
 ```env
-# PostgreSQL
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DB=middts
-DATABASE_URL=postgresql://postgres:postgres@db:5432/middts
-
-# Neo4j
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=password
-NEO4J_URL=neo4j:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=password
-
-# InfluxDB
-INFLUXDB_HOST=influxdb
-INFLUXDB_PORT=8086
-INFLUXDB_BUCKET=iot_data
-INFLUXDB_ORGANIZATION=middts
-INFLUXDB_TOKEN=admin_token_123
-
-# Middleware
-DEBUG=True
-ALLOWED_HOSTS=0.0.0.0,localhost,127.0.0.1
+CODESPACE_NAME=your-codespace-name
+GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN=app.github.dev
+MIDDLEWARE_PORT=8000
+CLIENT_PORT=8002
+SIMULATOR_PORT=8001
 ```
 
-## Subindo os serviços
+- Reinicie os serviços afetados após alterar o `.env` (não é necessário rebuild):
 
 ```bash
-docker compose up --build -d
+docker compose up -d --no-deps --force-recreate middleware client simulator
 ```
 
-Isso irá subir:
+Nota: o arquivo `.env.example` já contém as chaves `CODESPACE_NAME` e
+`GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN` (vazias por padrão). Você pode
+copiá-lo para `.env` e preencher essas variáveis localmente ou adicionar as
+mesmas nas configurações do Codespace. Após alterar `.env`, reinicie os
+serviços como mostrado acima.
 
-- PostgreSQL (`db`)
-- Neo4j (`neo4j`)
-- Parser API (`parser`)
-- InfluxDB (`influxdb`)
-- MidDiTS (Gunicorn + Django)
-- Nginx (como proxy reverso)
+- Se houver erros de CSRF após a troca de host, limpe os cookies do navegador para esses domínios e tente novamente.
 
-## Acessando os serviços
+Essas mudanças são pontuais — podemos depois mover para um padrão por-service `.env` e documentação mais completa.
 
-- MidDiTS API: http://localhost
-- InfluxDB UI: http://localhost:8086
-- Neo4j: http://localhost:7474
-- Parser: http://localhost:8080
 
-## Criando o superusuário
-
-```bash
-docker compose exec middleware python manage.py createsuperuser
-```
-
-## Healthcheck de dependências
-
-Após subir os serviços, execute o script:
-
-```bash
-./healthcheck_all.sh
-```
-
-Saída esperada:
-
-```
-PostgreSQL: OK
-Neo4j: OK
-InfluxDB: OK
-Parser API: OK
-✅ Verificação concluída.
-```
-
-## Finalizando
-
-Para parar:
-
-```bash
-docker compose down
-```
-
-🔗 Acessando os Serviços
-
-Após a inicialização dos containers, os serviços estarão disponíveis nas seguintes URLs:
-Serviço	URL	Observação
-MidDiTS API	http://localhost/api/docs	Interface REST da aplicação
-Admin Django	http://localhost/admin	Interface administrativa
-Nginx (proxy)	http://localhost	Redireciona para o middts
-Neo4j	http://localhost:7474	Interface gráfica do Neo4j
-InfluxDB	http://localhost:8086	Gerenciador de buckets e tokens
-Parser ThingsBoard	http://localhost:8080 / 8081	API auxiliar para parser DTDL
-PostgreSQL	localhost:5434	Conexão para ferramentas como DBeaver ou psql

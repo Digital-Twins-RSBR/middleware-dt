@@ -1,3 +1,4 @@
+setuptools>=70.0.0
 annotated-types==0.7.0
 asgiref==3.8.1
 certifi==2024.6.2
@@ -8,7 +9,7 @@ django-extensions==3.2.1
 django-ninja==1.1.0
 django-ninja-extra==0.20.7
 djangorestframework==3.14.0
-djangorestframework-simplejwt==5.2.2
+djangorestframework-simplejwt==5.3.1
 idna==3.7
 injector==0.21.0
 psycopg2-binary==2.9.6
@@ -23,5 +24,12 @@ urllib3==2.2.2
 websockets==12.0
 django-cors-headers==4.4.0
 neomodel==5.4.2
-gunicorn==20.1.0
+gunicorn==23.0.0
+
+# Force CPU-only PyTorch wheels to avoid pulling CUDA/NVIDIA packages
+# that bloat image size and may exhaust disk in constrained environments.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.5.1+cpu
+
 sentence_transformers==4.1.0
+redis==5.0.8

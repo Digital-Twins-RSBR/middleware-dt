@@ -37,9 +37,9 @@ class DeviceSchema(ModelSchema):
         return Property.objects.filter(device=obj)
 
 class DeviceDiscoveryParams(Schema):
-    pageSize: int
-    page: int
-    type: str = None
-    textSearch: str = None
-    sortProperty: str = None
-    sortOrder: str = None
+    pageSize: int = 200
+    page: int = 0
+    type: str | None = None
+    textSearch: str | None = None
+    sortProperty: str | None = None
+    sortOrder: str | None = None

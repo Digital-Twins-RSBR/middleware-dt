@@ -1,0 +1,19 @@
+{
+	"folders": [
+		{
+			"name": "middleware-dt",
+			"path": "."
+		},
+		{
+			"name": "iot_simulator",
+			"path": "iot_simulator"
+		},
+		{
+			"name": "middts-client",
+			"path": "middts-client"
+		}
+	],
+	"settings": {
+		"terminal.integrated.cwd": "${workspaceFolder:middleware-dt}"
+	}
+}

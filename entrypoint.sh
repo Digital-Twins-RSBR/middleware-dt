@@ -1,14 +1,45 @@
-#!/bin/sh
+#!/bin/bash
 set -e
 
 # Carrega .env se existir
 
 # Carrega .env de forma robusta, exportando cada variável
 if [ -f "/middleware-dt/.env" ]; then
-	echo "Carregando variáveis de /middleware-dt/.env"
-	set -a
-	. /middleware-dt/.env
-	set +a
+	echo "Carregando variáveis de /middleware-dt/.env (preservando variáveis já definidas)"
+	while IFS= read -r line || [ -n "$line" ]; do
+		# skip empty lines and comments
+		case "$line" in
+			''|\#*) continue ;;
+		esac
+		key=$(printf "%s" "$line" | cut -d= -f1)
+		val=$(printf "%s" "$line" | cut -d= -f2-)
+		# only export if not already set in environment
+		if [ -z "${!key}" ]; then
+			export "$key"="$val"
+		fi
+	done < /middleware-dt/.env
+fi
+
+# Usa Redis externo quando REDIS_HOST aponta para outro serviço;
+# caso contrário, sobe um Redis local para compatibilidade.
+REDIS_HOST="${REDIS_HOST:-127.0.0.1}"
+REDIS_PORT="${REDIS_PORT:-6379}"
+if [ "$REDIS_HOST" = "127.0.0.1" ] || [ "$REDIS_HOST" = "localhost" ]; then
+	echo "[entrypoint] Iniciando Redis local para URLLC Session Manager..."
+	redis-server --daemonize yes --port "$REDIS_PORT" --bind 127.0.0.1 --maxmemory 64mb --maxmemory-policy volatile-lru
+	sleep 2
+	if redis-cli -h 127.0.0.1 -p "$REDIS_PORT" ping >/dev/null 2>&1; then
+		echo "[entrypoint] Redis local iniciado com sucesso"
+	else
+		echo "[entrypoint] [WARN] Redis local falhou ao iniciar, continuando sem cache Redis"
+	fi
+else
+	echo "[entrypoint] Usando Redis externo em ${REDIS_HOST}:${REDIS_PORT}"
+	if redis-cli -h "$REDIS_HOST" -p "$REDIS_PORT" ping >/dev/null 2>&1; then
+		echo "[entrypoint] Redis externo acessível"
+	else
+		echo "[entrypoint] [WARN] Redis externo indisponível no boot, continuando"
+	fi
 fi
 
 # Corrige DJANGO_SETTINGS_MODULE se antigo nome estiver presente
@@ -33,10 +64,17 @@ else
 fi
 export SECRET_KEY
 
+# Activate virtualenv if present to ensure the container uses the copied venv
+if [ -f "/opt/venv/bin/activate" ]; then
+	# shellcheck disable=SC1091
+	. /opt/venv/bin/activate
+	echo "[entrypoint] Activated virtualenv /opt/venv"
+fi
+
 # Aguarda Postgres ficar acessível (multi-host fallback)
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 PRIMARY_HOST="${POSTGRES_HOST:-}"
-FALLBACK_HOSTS="10.0.0.10 10.10.2.10"
+FALLBACK_HOSTS="10.0.1.10 10.0.0.10"
 HOST_CANDIDATES="${PRIMARY_HOST} ${FALLBACK_HOSTS}"
 echo "[db-wait] Interfaces disponíveis:"; ip -brief addr || true
 echo "[db-wait] Testando hosts candidatos: ${HOST_CANDIDATES}"
@@ -96,13 +134,20 @@ fi
 export POSTGRES_HOST="$FOUND_HOST"
 echo "[db-wait] Usando POSTGRES_HOST=$POSTGRES_HOST"
 
+# Ensure psql can use the provided POSTGRES_PASSWORD non-interactively
+export PGPASSWORD="${POSTGRES_PASSWORD:-}"
+
 # --- Ensure the configured POSTGRES_DB exists; create and optionally populate from SQL
 SQL_FILE="/middleware-dt/middts.sql"
 if [ -n "$POSTGRES_DB" ]; then
 	echo "[pg-ensure] Garantindo database $POSTGRES_DB exists on $POSTGRES_HOST"
 	# Try using psql CLI if available
 	if command -v psql >/dev/null 2>&1; then
-		PSQL_CMD="psql -h $POSTGRES_HOST -U $POSTGRES_USER -p $POSTGRES_PORT -d postgres -tAc"
+		if [ -n "$POSTGRES_PASSWORD" ]; then
+			PSQL_CMD="PGPASSWORD=\"$POSTGRES_PASSWORD\" psql -h $POSTGRES_HOST -U $POSTGRES_USER -p $POSTGRES_PORT -d postgres -tAc"
+		else
+			PSQL_CMD="psql -h $POSTGRES_HOST -U $POSTGRES_USER -p $POSTGRES_PORT -d postgres -tAc"
+		fi
 		exists=$($PSQL_CMD "SELECT 1 FROM pg_database WHERE datname='$POSTGRES_DB';" 2>/dev/null | tr -d ' ')
 		if [ "$exists" != "1" ]; then
 			echo "[pg-ensure] Database $POSTGRES_DB não existe -> criando via psql"
@@ -164,6 +209,47 @@ python manage.py migrate --noinput
 echo "Coletando arquivos estáticos..."
 python manage.py collectstatic --noinput || true
 
+# Ensure Django superuser exists and has the configured password/flags
+# This will create the user if missing, and update password/flags if it already exists.
+if [ -n "$DJANGO_SUPERUSER_USERNAME" ] && [ -n "$DJANGO_SUPERUSER_PASSWORD" ]; then
+	echo "[entrypoint] Ensuring Django superuser $DJANGO_SUPERUSER_USERNAME exists and is configured"
+	python - <<PY
+import os
+import django
+django.setup()
+from django.contrib.auth import get_user_model
+from core.models import Organization, OrganizationMembership
+User = get_user_model()
+username = os.getenv('DJANGO_SUPERUSER_USERNAME')
+email = os.getenv('DJANGO_SUPERUSER_EMAIL', 'admin@example.com')
+password = os.getenv('DJANGO_SUPERUSER_PASSWORD')
+u, created = User.objects.get_or_create(username=username, defaults={'email': email})
+u.email = email
+u.is_staff = True
+u.is_superuser = True
+u.set_password(password)
+u.save()
+if created:
+	print('[entrypoint] superuser created')
+else:
+	print('[entrypoint] superuser updated (password/flags applied)')
+
+org, org_created = Organization.objects.get_or_create(
+	name='Default',
+	defaults={'description': 'Default organization bootstraped by entrypoint'},
+)
+membership, membership_created = OrganizationMembership.objects.get_or_create(
+	user=u,
+	organization=org,
+	defaults={'role': OrganizationMembership.ROLE_ADMIN},
+)
+if org_created:
+	print('[entrypoint] Default organization created')
+if membership_created:
+	print('[entrypoint] superuser added to Default organization')
+PY
+fi
+
 # Configura token do InfluxDB (opcional) via env
 if [ -n "$INFLUXDB_TOKEN" ]; then
 	echo "INFLUXDB_TOKEN definido (****)."
@@ -172,4 +258,51 @@ else
 fi
 
 echo "Iniciando Gunicorn..."
+# Start ThingsBoard WebSocket listener (listen_gateway) in background and persist logs
+# Create logs dir if missing
+mkdir -p /middleware-dt/logs
+LISTENER_LOG="/middleware-dt/logs/listen_gateway.log"
+# Optionally wait for ThingsBoard HTTP endpoint before starting the listener.
+# This avoids noisy ConnectionRefused errors while ThingsBoard is still booting.
+# Configure via environment variables:
+#   START_LISTENER_AFTER_TB=1 (default) -> wait for TB
+#   START_LISTENER_TIMEOUT=300 (seconds total to wait before giving up)
+#   TB_HOST / THINGSBOARD_HOST (host to check) and TB_PORT (default 8080)
+
+START_LISTENER_AFTER_TB="${START_LISTENER_AFTER_TB:-1}"
+START_LISTENER_TIMEOUT="${START_LISTENER_TIMEOUT:-300}"
+TB_HOST="${TB_HOST:-${THINGSBOARD_HOST:-10.0.0.2}}"
+TB_PORT="${TB_PORT:-8080}"
+TB_SCHEME="${TB_SCHEME:-http}"
+
+if [ "$START_LISTENER_AFTER_TB" = "1" ]; then
+	echo "[entrypoint] Waiting up to ${START_LISTENER_TIMEOUT}s for ThingsBoard at ${TB_HOST}:${TB_PORT} before starting listen_gateway"
+	elapsed=0
+	backoff=1
+	while [ $elapsed -lt $START_LISTENER_TIMEOUT ]; do
+		code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "${TB_SCHEME}://${TB_HOST}:${TB_PORT}/api/auth/login" || echo 000)
+		if [ "$code" != "000" ]; then
+			echo "[entrypoint] ThingsBoard HTTP responded with ${code} (ready). Starting listen_gateway."
+			break
+		fi
+		sleep $backoff
+		elapsed=$((elapsed + backoff))
+		backoff=$((backoff * 2))
+		if [ $backoff -gt 60 ]; then backoff=60; fi
+	done
+	if [ $elapsed -ge $START_LISTENER_TIMEOUT ]; then
+		echo "[entrypoint][WARN] Timed out waiting for ThingsBoard after ${START_LISTENER_TIMEOUT}s; starting listen_gateway anyway"
+	fi
+else
+	echo "[entrypoint] START_LISTENER_AFTER_TB!=1 -> starting listen_gateway immediately"
+fi
+
+echo "[entrypoint] Starting listen_gateway in background (logs -> $LISTENER_LOG)"
+# Use nohup to keep it running in background; redirect stdout/stderr to log
+nohup python manage.py listen_gateway >> "$LISTENER_LOG" 2>&1 &
+LISTENER_PID=$!
+
+# Ensure the listener is killed when the container exits
+trap 'echo "[entrypoint] Stopping background listener (pid $LISTENER_PID)"; kill ${LISTENER_PID} 2>/dev/null || true' EXIT INT TERM
+
 exec gunicorn --bind 0.0.0.0:8000 --workers 3 middleware_dt.wsgi:application

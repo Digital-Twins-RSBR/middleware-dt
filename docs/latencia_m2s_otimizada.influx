@@ -1,0 +1,83 @@
+import "experimental"
+
+// M2S Latency Report - Versão Funcional Completa
+// Calcula latência M2S real usando sent_timestamp (middleware) e received_timestamp (simulator)
+
+// Read middts sent timestamps (M2S direction)
+middts_sent = from(bucket: "iot_data")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "latency_measurement")
+  |> filter(fn: (r) => r["source"] == "middts")
+  |> filter(fn: (r) => r._field == "sent_timestamp")
+  |> map(fn: (r) => ({ r with sent_timestamp: r._value }))
+  |> keep(columns: ["_time", "sensor", "sent_timestamp"])
+
+// Read simulator received timestamps (M2S direction)
+simulator_received = from(bucket: "iot_data")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "latency_measurement")
+  |> filter(fn: (r) => r["source"] == "simulator")
+  |> filter(fn: (r) => r._field == "received_timestamp")
+  |> map(fn: (r) => ({ r with received_timestamp: r._value }))
+  |> keep(columns: ["_time", "sensor", "received_timestamp"])
+
+// Join on sensor for M2S latency calculation
+joined = join(tables: {s: middts_sent, r: simulator_received}, on: ["sensor"]) 
+  |> map(fn: (r) => ({
+    _time: r._time_r,
+    sensor: r.sensor,
+    sent_timestamp: r.sent_timestamp,
+    received_timestamp: r.received_timestamp,
+    latency_ms: float(v: (r.received_timestamp - r.sent_timestamp)),
+    time_diff_ns: int(v: r._time_r) - int(v: r._time_s)
+  }))
+  |> filter(fn: (r) => exists r.sent_timestamp and exists r.received_timestamp)
+  |> filter(fn: (r) => r.latency_ms >= 0.0 and r.latency_ms < 1000.0)  // Filtro URLLC
+  |> filter(fn: (r) => r.time_diff_ns >= 0 and r.time_diff_ns < 30000000000)  // Janela de 30s
+
+// Per-event: keep the minimum latency to avoid correlation errors
+per_event = joined
+  |> group(columns: ["sensor", "sent_timestamp"]) 
+  |> min(column: "latency_ms")
+  |> group()
+
+// Resultados M2S
+per_event
+  |> yield(name: "m2s_latency_events")
+
+// Estatísticas por sensor
+per_event
+  |> group(columns: ["sensor"])
+  |> mean(column: "latency_ms")
+  |> yield(name: "m2s_mean_per_sensor")
+
+per_event
+  |> group(columns: ["sensor"]) 
+  |> quantile(column: "latency_ms", q: 0.95)
+  |> yield(name: "m2s_p95_per_sensor")
+
+// Estatísticas globais
+per_event
+  |> mean(column: "latency_ms")
+  |> yield(name: "m2s_mean_global")
+
+per_event
+  |> quantile(column: "latency_ms", q: 0.95)
+  |> yield(name: "m2s_p95_global")
+
+// Debug: Contadores para verificação
+from(bucket: "iot_data")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "latency_measurement")
+  |> filter(fn: (r) => r["source"] == "middts")
+  |> filter(fn: (r) => r._field == "sent_timestamp")
+  |> count()
+  |> yield(name: "m2s_sent_count")
+
+from(bucket: "iot_data")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "latency_measurement")
+  |> filter(fn: (r) => r["source"] == "simulator")
+  |> filter(fn: (r) => r._field == "received_timestamp")
+  |> count()
+  |> yield(name: "m2s_received_count")

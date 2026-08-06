@@ -1,0 +1,167 @@
+// URLLC Compliance Dashboard: Análise de Conformidade Ultra-Baixa Latência
+// Métricas específicas para validação de requisitos URLLC (<1ms)
+// Dashboard executivo para monitoramento de SLA de latência
+
+import "experimental"
+
+// S2M URLLC Analysis
+s2m_sent = from(bucket: "iot_data")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "device_data")
+  |> filter(fn: (r) => r["source"] == "simulator")
+  |> filter(fn: (r) => r._field == "sent_timestamp")
+  |> map(fn: (r) => ({ r with sent_timestamp: r._value }))
+  |> keep(columns: ["_time", "sensor", "sent_timestamp"])
+
+s2m_received = from(bucket: "iot_data")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "device_data")
+  |> filter(fn: (r) => r["source"] == "middts")
+  |> filter(fn: (r) => r._field == "received_timestamp")
+  |> map(fn: (r) => ({ r with received_timestamp: r._value }))
+  |> keep(columns: ["_time", "sensor", "received_timestamp"])
+
+s2m_urllc = join(tables: {s: s2m_sent, r: s2m_received}, on: ["sensor"])
+  |> filter(fn: (r) => exists r.sent_timestamp and exists r.received_timestamp)
+  |> map(fn: (r) => ({
+    _time: r._time_r,
+    sensor: r.sensor,
+    direction: "S2M",
+    latencia_ms: float(v: (r.received_timestamp - r.sent_timestamp)),
+    time_diff_ns: int(v: r._time_r) - int(v: r._time_s)
+  }))
+  |> filter(fn: (r) => r.latencia_ms >= 0.0 and r.latencia_ms < 1000.0)
+  |> filter(fn: (r) => r.time_diff_ns >= 0 and r.time_diff_ns < 30000000000)
+  |> group(columns: ["sensor", "sent_timestamp"])
+  |> min(column: "latencia_ms")
+  |> group()
+
+// M2S URLLC Analysis
+m2s_sent = from(bucket: "iot_data")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "latency_measurement")
+  |> filter(fn: (r) => r["source"] == "middts")
+  |> filter(fn: (r) => r._field == "sent_timestamp")
+  |> map(fn: (r) => ({ r with sent_timestamp: r._value }))
+  |> keep(columns: ["_time", "sensor", "sent_timestamp"])
+
+m2s_received = from(bucket: "iot_data")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement == "latency_measurement")
+  |> filter(fn: (r) => r["source"] == "simulator")
+  |> filter(fn: (r) => r._field == "received_timestamp")
+  |> map(fn: (r) => ({ r with received_timestamp: r._value }))
+  |> keep(columns: ["_time", "sensor", "received_timestamp"])
+
+m2s_urllc = join(tables: {s: m2s_sent, r: m2s_received}, on: ["sensor"])
+  |> filter(fn: (r) => exists r.sent_timestamp and exists r.received_timestamp)
+  |> map(fn: (r) => ({
+    _time: r._time_r,
+    sensor: r.sensor,
+    direction: "M2S",
+    latencia_ms: float(v: (r.received_timestamp - r.sent_timestamp)),
+    time_diff_ns: int(v: r._time_r) - int(v: r._time_s)
+  }))
+  |> filter(fn: (r) => r.latencia_ms >= 0.0 and r.latencia_ms < 1000.0)
+  |> filter(fn: (r) => r.time_diff_ns >= 0 and r.time_diff_ns < 30000000000)
+  |> group(columns: ["sensor", "sent_timestamp"])
+  |> min(column: "latencia_ms")
+  |> group()
+
+// Combined URLLC Dataset
+combined_urllc = union(tables: [s2m_urllc, m2s_urllc])
+
+// URLLC Compliance Metrics (< 1ms threshold)
+urllc_compliance_global = combined_urllc
+  |> map(fn: (r) => ({ r with 
+      urllc_1ms: if r.latencia_ms <= 1.0 then 1.0 else 0.0,
+      urllc_5ms: if r.latencia_ms <= 5.0 then 1.0 else 0.0,
+      urllc_10ms: if r.latencia_ms <= 10.0 then 1.0 else 0.0
+  }))
+
+// Global Compliance Rates
+urllc_compliance_global
+  |> group()
+  |> mean(column: "urllc_1ms")
+  |> map(fn: (r) => ({ r with threshold: "1ms", compliance_rate: r.urllc_1ms * 100.0 }))
+  |> yield(name: "urllc_compliance_1ms_global")
+
+urllc_compliance_global
+  |> group()
+  |> mean(column: "urllc_5ms")
+  |> map(fn: (r) => ({ r with threshold: "5ms", compliance_rate: r.urllc_5ms * 100.0 }))
+  |> yield(name: "urllc_compliance_5ms_global")
+
+urllc_compliance_global
+  |> group()
+  |> mean(column: "urllc_10ms")
+  |> map(fn: (r) => ({ r with threshold: "10ms", compliance_rate: r.urllc_10ms * 100.0 }))
+  |> yield(name: "urllc_compliance_10ms_global")
+
+// Compliance by Direction
+urllc_compliance_global
+  |> group(columns: ["direction"])
+  |> mean(column: "urllc_1ms")
+  |> map(fn: (r) => ({ r with threshold: "1ms", compliance_rate: r.urllc_1ms * 100.0 }))
+  |> yield(name: "urllc_compliance_1ms_by_direction")
+
+// Compliance by Sensor
+urllc_compliance_global
+  |> group(columns: ["sensor"])
+  |> mean(column: "urllc_1ms")
+  |> map(fn: (r) => ({ r with threshold: "1ms", compliance_rate: r.urllc_1ms * 100.0 }))
+  |> yield(name: "urllc_compliance_1ms_by_sensor")
+
+// Latency Distribution Categories
+urllc_categories = combined_urllc
+  |> map(fn: (r) => ({ r with 
+      category: if r.latencia_ms <= 1.0 then "URLLC_Excellent"
+                else if r.latencia_ms <= 5.0 then "URLLC_Good"
+                else if r.latencia_ms <= 10.0 then "URLLC_Acceptable"
+                else if r.latencia_ms <= 50.0 then "Low_Latency"
+                else "High_Latency"
+  }))
+  |> group(columns: ["category", "direction"])
+  |> count()
+  |> yield(name: "urllc_latency_categories")
+
+// Worst Case Analysis (P99.9)
+combined_urllc
+  |> group(columns: ["direction"])
+  |> quantile(column: "latencia_ms", q: 0.999)
+  |> map(fn: (r) => ({ r with percentile: "P99.9" }))
+  |> yield(name: "urllc_worst_case_p999")
+
+// Best Case Analysis (P1)
+combined_urllc
+  |> group(columns: ["direction"])
+  |> quantile(column: "latencia_ms", q: 0.01)
+  |> map(fn: (r) => ({ r with percentile: "P1" }))
+  |> yield(name: "urllc_best_case_p1")
+
+// SLA Violation Detection (latencies > 10ms)
+sla_violations = combined_urllc
+  |> filter(fn: (r) => r.latencia_ms > 10.0)
+  |> yield(name: "urllc_sla_violations")
+
+// Performance Summary Table
+performance_summary = combined_urllc
+  |> group(columns: ["direction"])
+  |> aggregateWindow(every: inf, fn: (column, tables=<-) => 
+      tables 
+      |> reduce(fn: (r, accumulator) => ({
+          count: accumulator.count + 1,
+          sum: accumulator.sum + r.latencia_ms,
+          min: if r.latencia_ms < accumulator.min then r.latencia_ms else accumulator.min,
+          max: if r.latencia_ms > accumulator.max then r.latencia_ms else accumulator.max
+      }), identity: {count: 0, sum: 0.0, min: 999999.0, max: 0.0})
+      |> map(fn: (r) => ({ 
+          _time: now(),
+          direction: r.direction,
+          count: r.count,
+          mean: r.sum / float(v: r.count),
+          min: r.min,
+          max: r.max
+      }))
+  )
+  |> yield(name: "urllc_performance_summary")
