@@ -4,30 +4,69 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
+    name: Build e validacao
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.12'
 
-      - name: Install dependencies
+      - name: Validate docker-compose
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements/base.txt
+          cp .env.example .env
+          # Os profiles simulator/client fazem parte do fluxo padrao do Makefile
+          # (`make build` / `make up`), entao sao validados junto.
+          docker compose -f docker-compose.yml \
+            --profile simulator --profile client \
+            config --quiet
+          echo "Servicos validados:"
+          docker compose -f docker-compose.yml \
+            --profile simulator --profile client \
+            config --services | sort
 
-      # TODO quando tiver testes no projeto
-      # - name: Run tests
-      #  run: |
-      #    pytest
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
 
       - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: middleware-dt:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=min
+
+      - name: Django system check
         run: |
-          docker build -t middleware-dt:${{ github.sha }} .
+          docker run --rm \
+            --entrypoint python \
+            -e DJANGO_SETTINGS_MODULE=middleware_dt.settings_base \
+            -e SECRET_KEY=ci-dummy-secret \
+            middleware-dt:${{ github.sha }} manage.py check
+
+      # TODO quando tiver testes no projeto: rodar dentro da imagem, para
+      # reaproveitar as dependencias ja instaladas no build.
+      # - name: Run tests
+      #   run: |
+      #     docker run --rm --entrypoint python \
+      #       -e DJANGO_SETTINGS_MODULE=middleware_dt.settings_base \
+      #       -e SECRET_KEY=ci-dummy-secret \
+      #       middleware-dt:${{ github.sha }} -m pytest
+
+      - name: Free disk after build
+        if: always()
+        run: docker image rm -f middleware-dt:${{ github.sha }} || true
